@@ -1,3 +1,5 @@
+'use client';
+
 import {
   createContext,
   useCallback,
@@ -8,6 +10,7 @@ import {
   type ReactNode,
 } from 'react';
 import { en } from './locales/en';
+import { ptBR } from './locales/pt-BR';
 import { zhCN } from './locales/zh-CN';
 import { zhTW } from './locales/zh-TW';
 import { LOCALES, type Dict, type Locale } from './types';
@@ -21,6 +24,7 @@ const DICTS: Record<Locale, Dict> = {
   'en': en,
   'zh-CN': zhCN,
   'zh-TW': zhTW,
+  'pt-BR': ptBR,
 };
 
 const LS_KEY = 'open-design:locale';
