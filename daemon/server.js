@@ -1129,6 +1129,26 @@ export async function startServer({ port = 7456, returnServer = false } = {}) {
       return res.status(400).json({ error: 'baseUrl, apiKey, and model are required' });
     }
 
+    // Validate baseUrl — only allow http/https and block internal IPs (SSRF).
+    let parsed;
+    try {
+      parsed = new URL(baseUrl.replace(/\/+$/, ''));
+    } catch {
+      return res.status(400).json({ error: 'Invalid baseUrl' });
+    }
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      return res.status(400).json({ error: 'Only http/https allowed' });
+    }
+    if (
+      ['localhost', '127.0.0.1', '::1'].includes(parsed.hostname) ||
+      parsed.hostname.startsWith('169.254.') ||
+      parsed.hostname.startsWith('10.') ||
+      /^192\.168\./.test(parsed.hostname) ||
+      /^172\.(1[6-9]|2\d|3[01])\./.test(parsed.hostname)
+    ) {
+      return res.status(400).json({ error: 'Internal IPs blocked' });
+    }
+
     // Build the upstream URL. If the base URL already ends with /v1 (or
     // /v1/), append /chat/completions directly. Otherwise append
     // /v1/chat/completions for providers that expect a versioned prefix.
@@ -1142,7 +1162,7 @@ export async function startServer({ port = 7456, returnServer = false } = {}) {
 
     // Force MiMo to behave as a pure text generator (no tool calls)
     const isMiMo = model.toLowerCase().startsWith('mimo');
-    console.log(`[proxy] ${req.method} ${url} model=${model} miMo=${isMiMo}`);
+    console.log(`[proxy] ${req.method} ${parsed.hostname} model=${model} miMo=${isMiMo}`);
 
     const payload = {
       model,
@@ -1184,8 +1204,9 @@ export async function startServer({ port = 7456, returnServer = false } = {}) {
 
     if (!upstream.ok) {
       const errText = await upstream.text().catch(() => '');
-      console.error(`[proxy] upstream ${upstream.status}: ${errText.slice(0, 200)}`);
-      send('error', { message: `upstream ${upstream.status}: ${errText.slice(0, 500)}` });
+      const safeErr = errText.slice(0, 500).replace(/Bearer [A-Za-z0-9_\-\.]+/g, 'Bearer [REDACTED]');
+      console.error(`[proxy] upstream ${upstream.status}: ${safeErr.slice(0, 200)}`);
+      send('error', { message: `upstream ${upstream.status}: ${safeErr}` });
       return res.end();
     }
 

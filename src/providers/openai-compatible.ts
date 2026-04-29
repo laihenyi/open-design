@@ -120,8 +120,10 @@ export function isOpenAICompatible(model: string, baseUrl: string): boolean {
   if (u.includes('openrouter')) return true;
   // OpenAI direct
   if (u.includes('openai.com')) return true;
+  // Known non-Anthropic model prefixes — route to OpenAI-compatible.
+  if (m.startsWith('gpt-') || m.startsWith('o1') || m.startsWith('o3') || m.startsWith('o4')) return true;
   // If the base URL is NOT the Anthropic default, assume OpenAI-compatible
   // as the safe fallback for third-party providers.
-  if (u && !u.includes('anthropic') && !u.includes('xiaomimimo.com/anthropic')) return true;
+  if (u && !u.includes('anthropic')) return true;
   return false;
 }
