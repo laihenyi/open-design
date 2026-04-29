@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import { en } from './locales/en';
-import { zhCN } from './locales/zh-CN';
+import { zhTW } from './locales/zh-TW';
 import { LOCALES, type Dict, type Locale } from './types';
 
 export { LOCALES, LOCALE_LABEL } from './types';
@@ -18,7 +18,7 @@ type DictKey = keyof Dict;
 
 const DICTS: Record<Locale, Dict> = {
   'en': en,
-  'zh-CN': zhCN,
+  'zh-TW': zhTW,
 };
 
 const LS_KEY = 'open-design:locale';
