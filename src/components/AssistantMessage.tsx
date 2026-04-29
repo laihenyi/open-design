@@ -9,6 +9,8 @@ import { useT } from '../i18n';
 import type { Dict } from '../i18n/types';
 import type { AgentEvent, ChatMessage, ProjectFile } from '../types';
 
+type TranslateFn = (key: keyof Dict, vars?: Record<string, string | number>) => string;
+
 interface Props {
   message: ChatMessage;
   streaming: boolean;
@@ -54,13 +56,14 @@ export function AssistantMessage({
     | Extract<AgentEvent, { kind: 'usage' }>
     | undefined;
   const produced = message.producedFiles ?? [];
+  const roleLabel = assistantRoleLabel(message, t);
   // Track which forms the user submitted in this session so we lock them
   // immediately on click (without waiting for the parent to re-render).
   const [locallySubmitted, setLocallySubmitted] = useState<Set<string>>(() => new Set());
 
   return (
     <div className="msg assistant">
-      <div className="role">{t('assistant.role')}</div>
+      <div className="role">{roleLabel}</div>
       <div className="assistant-flow">
         {blocks.length === 0 && streaming ? (
           <WaitingPill startedAt={message.startedAt} latestStatus={latestStatusLabel(events)} />
@@ -115,6 +118,39 @@ export function AssistantMessage({
       </div>
     </div>
   );
+}
+
+function assistantRoleLabel(message: ChatMessage, t: TranslateFn): string {
+  const fromMetadata = agentDisplayName(message.agentId, message.agentName);
+  if (fromMetadata) return fromMetadata;
+  const starting = message.events?.find(
+    (e) => e.kind === 'status' && e.label === 'starting' && e.detail,
+  ) as Extract<AgentEvent, { kind: 'status' }> | undefined;
+  return agentDisplayName(starting?.detail) ?? t('assistant.role');
+}
+
+function agentDisplayName(
+  id: string | undefined,
+  fallbackName?: string,
+): string | null {
+  const names: Record<string, string> = {
+    claude: 'Claude',
+    codex: 'Codex',
+    gemini: 'Gemini',
+    opencode: 'OpenCode',
+    'cursor-agent': 'Cursor',
+    qwen: 'Qwen',
+  };
+  if (id && names[id]) return names[id];
+  const fallbackNames: Record<string, string> = {
+    'Claude Code': 'Claude',
+    'Codex CLI': 'Codex',
+    'Gemini CLI': 'Gemini',
+    'Cursor Agent': 'Cursor',
+    'Qwen Code': 'Qwen',
+  };
+  if (fallbackName && fallbackNames[fallbackName]) return fallbackNames[fallbackName];
+  return fallbackName ?? id ?? null;
 }
 
 function AssistantFooter({

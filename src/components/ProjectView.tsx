@@ -341,11 +341,23 @@ export function ProjectView({
         content: prompt,
         attachments: attachments.length > 0 ? attachments : undefined,
       };
+      const selectedAgent =
+        config.mode === 'daemon' && config.agentId
+          ? agents.find((a) => a.id === config.agentId)
+          : null;
+      const assistantAgentId =
+        config.mode === 'daemon' ? config.agentId ?? undefined : 'anthropic-api';
+      const assistantAgentName =
+        config.mode === 'daemon'
+          ? assistantAgentDisplayName(config.agentId, selectedAgent?.name)
+          : 'Anthropic API';
       const assistantId = crypto.randomUUID();
       const assistantMsg: ChatMessage = {
         id: assistantId,
         role: 'assistant',
         content: '',
+        agentId: assistantAgentId,
+        agentName: assistantAgentName,
         events: [],
         startedAt,
       };
@@ -523,6 +535,7 @@ export function ProjectView({
       activeConversationId,
       messages,
       config,
+      agents,
       composedSystemPrompt,
       onTouchProject,
       project.id,
@@ -787,4 +800,20 @@ export function ProjectView({
       </div>
     </div>
   );
+}
+
+function assistantAgentDisplayName(
+  agentId: string | null,
+  fallbackName?: string,
+): string | undefined {
+  const names: Record<string, string> = {
+    claude: 'Claude',
+    codex: 'Codex',
+    gemini: 'Gemini',
+    opencode: 'OpenCode',
+    'cursor-agent': 'Cursor',
+    qwen: 'Qwen',
+  };
+  if (agentId && names[agentId]) return names[agentId];
+  return fallbackName ?? agentId ?? undefined;
 }
