@@ -212,6 +212,7 @@ NO_ITALIC_RANGES = (
     (0x0900, 0x097F),    # Devanagari
     (0x0980, 0x09FF),    # Bengali
     (0x0E00, 0x0E7F),    # Thai
+    (0x0E80, 0x0EFF),    # Lao
     (0x1780, 0x17FF),    # Khmer
 )
 
