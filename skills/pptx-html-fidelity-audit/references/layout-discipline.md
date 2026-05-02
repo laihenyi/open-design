@@ -2,6 +2,12 @@
 
 The full rule set referenced from `SKILL.md` Step 4. Read this when the deck has slide types beyond simple title-+-body or when you're building the re-export script from scratch.
 
+> **How to use this file.** Skim §1-3 once to internalize the rules
+> (constants, `Cursor`, hero budget centering). Then jump to the slide-type
+> snippet that matches what you're building — pipeline, two-column,
+> observation grid, etc. — and adapt. The file is meant to be navigated,
+> not read end-to-end.
+
 ## 1. Constants — define once at the top of the export script
 
 ```python

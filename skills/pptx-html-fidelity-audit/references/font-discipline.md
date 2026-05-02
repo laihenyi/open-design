@@ -37,6 +37,12 @@ fc-list | grep -i "noto serif"            # Linux / WSL
 mdfind "kMDItemFSName == '*NotoSerif*'"   # macOS
 ```
 
+```powershell
+# Windows (PowerShell)
+Get-ChildItem -Path "$env:WINDIR\Fonts","$env:LOCALAPPDATA\Microsoft\Windows\Fonts" `
+  -Filter "*NotoSerif*" -ErrorAction SilentlyContinue
+```
+
 Install missing families:
 
 ```bash

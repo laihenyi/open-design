@@ -22,7 +22,18 @@ A repeatable workflow for catching the ways a `python-pptx` export silently drif
 
 The user has:
 
-- A source HTML slide deck (typically a single-file deck with `<section class="slide">` blocks).
+- A source HTML slide deck (typically a single-file deck with `<section class="slide">` blocks):
+
+  ```html
+  <section class="slide light">
+    <div class="chrome">2026 · Q2 review</div>
+    <span class="kicker">Pillar 03</span>
+    <h2 class="h-xl">Shipping <em>velocity</em> doubled</h2>
+    <p class="lead">…</p>
+    <div class="foot">page 5 / 14</div>
+  </section>
+  ```
+
 - A PPTX file generated from that deck via python-pptx (or similar).
 - A suspicion (or visible evidence) that the PPTX doesn't match the HTML — text bleeding into the footer, italic words gone flat, hero slides not centered, sections cropped, tag styling lost.
 
@@ -107,6 +118,9 @@ CONTENT_MAX_Y  = Inches(6.70)     # NOTHING in content area may cross this
 FOOTER_TOP     = Inches(6.85)     # footer row pinned here, edge-to-edge
 ```
 
+> **Customizing the rails.** The defaults above suit a 16:9 canvas with a slim footer. If your design system uses a wider footer or a 4:3 canvas, override these constants in your export script and pass the same values to `verify_layout.py` via `--content-max-y` / `--canvas-h` / `--canvas-w`. See `references/layout-discipline.md` §1 for the full constant table.
+
+
 **Use a cursor for content blocks instead of pinning each block at an absolute y:**
 
 ```python
@@ -115,7 +129,7 @@ class Cursor:
     def __init__(self, y_start, cap=CONTENT_MAX_Y):
         self.y = y_start
         self.cap = cap
-    def take(self, h, gap=Inches(0.12)):
+    def take(self, h, gap=Inches(0.12)):  # ~1 line of whitespace at 14pt; tighten/loosen per design system
         top = self.y
         self.y = top + h + gap
         if self.y > self.cap:
@@ -212,3 +226,29 @@ Read the references when:
 - **Skipping verification because "it looked fine in PowerPoint preview".** Preview anti-aliasing hides 1–2 mm overflows. The script doesn't.
 - **Italicizing CJK display type.** No CJK serif on macOS / Windows ships with a real italic — synthesizing it produces a slanted bitmap. Italicize *only* runs that are EN/Latin display copy.
 - **Using `MARGIN_TOP` for hero slides.** Hero slides need *budget centering*, not top-anchored. This is the most common hero defect and the cheapest to fix.
+
+---
+
+## Why geometry-based verification, not visual diff
+
+An earlier iteration of this skill leaned on visual diffing — render the
+.pptx through Keynote → PDF → PNG, screenshot the HTML through Chrome
+headless, stitch them side-by-side with `magick`. It worked, but with
+three sharp drawbacks:
+
+- **Platform lock-in.** Keynote AppleScript is macOS-only; `magick` and
+  font-discovery commands vary across OSes; CI pipelines on Linux can't
+  reproduce the chain.
+- **Imprecision.** A 1-2 mm overflow gets anti-aliased away in a PNG
+  preview. The human eye misses it; the script catches it as a hard
+  numeric violation.
+- **Setup cost.** Every contributor needs the full graphics toolchain
+  installed before they can audit. Geometry checks need only
+  `python-pptx`.
+
+Geometry-based verification gives up one thing the visual diff is good
+at: catching cases where shape positions are correct but the rendered
+glyph looks wrong (font fallback, kerning bugs, missing weight). When
+that case appears, fall back to a manual screenshot review — the
+five-layer audit in `references/font-discipline.md` covers most of the
+underlying causes.

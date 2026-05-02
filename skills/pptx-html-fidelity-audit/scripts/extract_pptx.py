@@ -64,7 +64,11 @@ def extract_runs(text_frame) -> list[dict]:
                 "size_pt": float(font.size.pt) if font.size is not None else None,
                 "bold": bool(font.bold) if font.bold is not None else None,
                 "italic": bool(font.italic) if font.italic is not None else None,
-                "color": color_repr(font.color) if font.name is not None or font.size else None,
+                # Color is independent of font name/size: a run can inherit
+                # font from the theme yet set its own color. Color drift is
+                # one of the things this audit needs to catch, so don't gate
+                # the extraction on unrelated font attributes.
+                "color": color_repr(font.color),
             })
     return runs
 

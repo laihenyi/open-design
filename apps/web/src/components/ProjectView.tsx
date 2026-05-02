@@ -1047,13 +1047,19 @@ export function ProjectView({
         `Set the \`<a:latin>\` and \`<a:ea>\` typeface slots explicitly so Chinese runs ` +
         `don't fall back to Microsoft JhengHei.\n\n` +
         `**Verify (mandatory gate).** After writing, run ` +
-        `\`python skills/pptx-html-fidelity-audit/scripts/verify_layout.py ${baseTitle}.pptx\`. ` +
-        `Zero rail violations is the gate for "shippable". If violations remain, walk Steps 2-4 ` +
-        `of the SKILL.md (extract dump → audit table → re-export) — do not declare done by ` +
-        `eyeballing the deck. If 🟡 typography issues surface (italic missing, unexpected ` +
-        `\`Calibri\` / \`Microsoft JhengHei\` in the XML), consult ` +
+        `\`python skills/pptx-html-fidelity-audit/scripts/verify_layout.py "${baseTitle}.pptx"\` ` +
+        `(quote the path — filenames may contain spaces). Zero rail violations is the gate ` +
+        `for "shippable". If violations remain, walk Steps 2-4 of the SKILL.md ` +
+        `(extract dump → audit table → re-export) — do not declare done by eyeballing the ` +
+        `deck. If 🟡 typography issues surface (italic missing, unexpected \`Calibri\` / ` +
+        `\`Microsoft JhengHei\` in the XML), consult ` +
         `\`skills/pptx-html-fidelity-audit/references/font-discipline.md\` for the ` +
         `five-layer font audit.\n\n` +
+        `**Customizing rails.** The default \`CONTENT_MAX_Y = 6.70"\` / ` +
+        `\`FOOTER_TOP = 6.85"\` constants suit a 16:9 canvas with a slim footer. If the ` +
+        `design system needs different rails (wider footer, 4:3 canvas), pass ` +
+        `\`--content-max-y\` / \`--canvas-h\` to \`verify_layout.py\` and update the matching ` +
+        `constants in the export script — see \`references/layout-discipline.md\` §1.\n\n` +
         `If \`python-pptx\` or the verifier is unavailable in this environment, say so ` +
         `explicitly — don't claim fidelity is correct without evidence.\n\n` +
         `Save into the current project folder (this conversation's working directory) as ` +
