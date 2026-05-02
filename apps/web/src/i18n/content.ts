@@ -121,6 +121,10 @@ const DE_SKILL_COPY: Record<string, { description?: string; examplePrompt?: stri
     examplePrompt:
       'Schreiben Sie mir eine PRD für Two-Factor Auth in unserer SaaS-App — Problem, Scope, Meilensteine, offene Fragen.',
   },
+  'pptx-html-fidelity-audit': {
+    examplePrompt:
+      'Vergleichen Sie deck.pptx mit deck.html, listen Sie Layout-Drift auf (Fußzeilen-Überlauf, fehlendes Italic, Hero nicht zentriert) und exportieren Sie mit Footer-Rail + Cursor-Flow neu.',
+  },
   'pricing-page': {
     examplePrompt:
       'Eine eigenständige Pricing Page — Header, Plan-Stufen, Feature-Vergleichstabelle und FAQ.',
