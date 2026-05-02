@@ -1038,11 +1038,27 @@ export function ProjectView({
       const baseTitle = fileName.replace(/\.html?$/i, '') || fileName;
       const prompt =
         `Export @${fileName} as an editable PPTX file titled "${baseTitle}".\n\n` +
-        `Use a PPTX skill (e.g. python-pptx) to produce a real .pptx — one slide per ` +
-        `top-level section/page in the HTML. Preserve text content, headings, and the ` +
-        `general layout intent. Save the file directly into the current project folder ` +
-        `(this conversation's working directory) as \`${baseTitle}.pptx\` so it shows ` +
-        `up in the file list, and report the on-disk path when done.`;
+        `**Generate.** Use python-pptx (preferred — full XML control). Apply the ` +
+        `footer-rail + cursor-flow discipline from \`skills/pptx-html-fidelity-audit/SKILL.md\` ` +
+        `Step 4 from the start: define \`CONTENT_MAX_Y = 6.70"\` and \`FOOTER_TOP = 6.85"\` ` +
+        `as constants, route every content block through a \`Cursor\` that refuses to cross ` +
+        `the rail, and use budget centering (not \`MARGIN_TOP\`) for hero/cover slides. ` +
+        `Preserve \`<em>\` / \`<i>\` as \`italic=True\` on Latin runs only — never on CJK. ` +
+        `Set the \`<a:latin>\` and \`<a:ea>\` typeface slots explicitly so Chinese runs ` +
+        `don't fall back to Microsoft JhengHei.\n\n` +
+        `**Verify (mandatory gate).** After writing, run ` +
+        `\`python skills/pptx-html-fidelity-audit/scripts/verify_layout.py ${baseTitle}.pptx\`. ` +
+        `Zero rail violations is the gate for "shippable". If violations remain, walk Steps 2-4 ` +
+        `of the SKILL.md (extract dump → audit table → re-export) — do not declare done by ` +
+        `eyeballing the deck. If 🟡 typography issues surface (italic missing, unexpected ` +
+        `\`Calibri\` / \`Microsoft JhengHei\` in the XML), consult ` +
+        `\`skills/pptx-html-fidelity-audit/references/font-discipline.md\` for the ` +
+        `five-layer font audit.\n\n` +
+        `If \`python-pptx\` or the verifier is unavailable in this environment, say so ` +
+        `explicitly — don't claim fidelity is correct without evidence.\n\n` +
+        `Save into the current project folder (this conversation's working directory) as ` +
+        `\`${baseTitle}.pptx\`. Report the on-disk path and a 1-line fidelity summary ` +
+        `(e.g. "0 rail violations across 14 slides") when done.`;
       const attachment: ChatAttachment = {
         path: fileName,
         name: fileName,
