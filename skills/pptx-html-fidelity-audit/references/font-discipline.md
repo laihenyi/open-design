@@ -41,8 +41,17 @@ Don't rely on visual intuition; rely on grep.
 > ```bash
 > # macOS / Linux: list the unicode blocks a font supports
 > fc-query -f '%{charset}\n' "$(fc-match -f '%{file}\n' 'Playfair Display')" | head
-> # Or open in fontforge → Element → Font Info → check OS/2 Unicode ranges
 > ```
+>
+> ```powershell
+> # Windows: PowerShell + System.Drawing reads the registered family list
+> [System.Reflection.Assembly]::LoadWithPartialName("System.Drawing") | Out-Null
+> $f = New-Object System.Drawing.Text.PrivateFontCollection
+> # Coverage detail (Unicode ranges) is best read in fontforge:
+> # File → Open → pick the .ttf / .otf → Element → Font Info → OS/2 → Unicode Ranges.
+> ```
+>
+> Cross-platform fallback: open the font in fontforge → Element → Font Info → OS/2 → Unicode Ranges.
 >
 > If coverage is missing, either swap to a face that has it (e.g.
 > Inter / IBM Plex Sans for Cyrillic; Be Vietnam Pro for Vietnamese) or
@@ -201,6 +210,9 @@ Practical implementation:
 
 ```python
 # Unicode ranges where italic should be suppressed.
+# Principle: include scripts whose writing tradition has no italic style.
+# Synthesized italic on these scripts produces a slanted bitmap that looks
+# mechanically deformed.
 NO_ITALIC_RANGES = (
     (0x3400, 0x9FFF),    # CJK Unified Ideographs
     (0xF900, 0xFAFF),    # CJK Compatibility Ideographs
@@ -209,8 +221,19 @@ NO_ITALIC_RANGES = (
     (0x0590, 0x05FF),    # Hebrew
     (0x0600, 0x06FF),    # Arabic
     (0x0750, 0x077F),    # Arabic Supplement
-    (0x0900, 0x097F),    # Devanagari
+    # Indic scripts — none have an italic tradition; PowerPoint synthesizes
+    # a fake slant on all of them. Add new ranges here when the deck mixes
+    # in additional scripts (e.g. Sinhala U+0D80–U+0DFF).
+    (0x0900, 0x097F),    # Devanagari (Hindi, Marathi, Sanskrit)
     (0x0980, 0x09FF),    # Bengali
+    (0x0A00, 0x0A7F),    # Gurmukhi (Punjabi)
+    (0x0A80, 0x0AFF),    # Gujarati
+    (0x0B00, 0x0B7F),    # Oriya
+    (0x0B80, 0x0BFF),    # Tamil
+    (0x0C00, 0x0C7F),    # Telugu
+    (0x0C80, 0x0CFF),    # Kannada
+    (0x0D00, 0x0D7F),    # Malayalam
+    # Southeast Asian
     (0x0E00, 0x0E7F),    # Thai
     (0x0E80, 0x0EFF),    # Lao
     (0x1780, 0x17FF),    # Khmer
@@ -227,7 +250,15 @@ def has_no_italic_script(text: str) -> bool:
 def add_run_with_italic_safety(p, text, *, latin_face: str, ea_face: str,
                                cs_face: str | None, size_pt: int,
                                italic: bool, **kwargs):
-    """Drop italic if the run contains characters from scripts without italic tradition."""
+    """Drop italic if the run contains characters from scripts without italic tradition.
+
+    Args:
+        latin_face: Font for Latin / Cyrillic / Greek runs (a:latin slot).
+        ea_face: Font for CJK runs (a:ea slot).
+        cs_face: Font for complex scripts — Arabic, Hebrew, Devanagari,
+            Thai, etc. (a:cs slot). Pass None when the run contains no
+            complex-script characters; set_run_fonts skips the slot.
+    """
     r = p.add_run()
     r.text = text
     r.font.size = Pt(size_pt)
@@ -262,6 +293,14 @@ flow, and chrome / footer mirroring are out of scope for `verify_layout.py`
 today and need manual review — see the Tier 2 follow-up note in the
 audit checklist.
 
+> **RTL discipline scope.** Full RTL support is roughly 15–20% of the
+> font + layout discipline surface area: Unicode TR9 bidi resolution,
+> chrome / footer / page-number mirroring, kashida (Arabic
+> elongation) interaction with line-fill, and right-anchored
+> alignment. This skill covers the typeface + slot mechanics only;
+> bidi and mirroring are flagged for a Tier 2 `rtl-discipline.md`
+> follow-up when fa / ar / he usage volume justifies the investment.
+
 ## Line height per script
 
 The `Cursor.take(gap=Inches(0.12))` default suits 14pt Latin body copy.
@@ -281,6 +320,13 @@ When the deck mixes scripts, take the max — line breathing-room is
 visual, an under-spaced Thai run in an otherwise Latin deck reads as
 "the Thai slide is broken".
 
+> **Source for these numbers.** Measured against Noto Sans / Noto
+> Serif / IBM Plex line-height at 14pt body with full diacritic stacks
+> (e.g. Devanagari conjuncts ष्ट्र, Thai 4-mark sequences ก़ํ้, stacked
+> Vietnamese ỗ). Adjust downward for condensed faces (Inter Condensed,
+> Noto Sans Condensed) and upward for display sizes ≥ 24pt where
+> diacritic ratios grow.
+
 ## Audit checklist
 
 After re-export, confirm all five layers:
@@ -299,9 +345,17 @@ After re-export, confirm all five layers:
       Devanagari / Thai) has `italic=True` set with a Latin italic
       face in the `<a:latin>` slot.
 - [ ] **Beyond CJK:** RTL slides set `<a:rtl val="1"/>` on the
-      paragraph's `pPr`. Cursor `gap` is bumped per the line-height
-      table above when the deck includes Vietnamese, Devanagari, Thai,
-      or Khmer content.
+      paragraph's `pPr` — verify with:
+
+      ```bash
+      unzip -o deck.pptx -d /tmp/audit
+      grep -h '<a:rtl' /tmp/audit/ppt/slides/*.xml | sort -u
+      # Expect a hit for every fa / ar / he slide; empty output on
+      # an RTL deck means the directionality wasn't propagated.
+      ```
+
+      Cursor `gap` is bumped per the line-height table above when the
+      deck includes Vietnamese, Devanagari, Thai, or Khmer content.
 
 If all five pass and the user still reports "the type looks wrong",
 ask for a screenshot pointing at the specific glyph or word — the
