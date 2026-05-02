@@ -84,6 +84,14 @@ add_lead(slide,   top=c.take(Inches(0.8),  label="lead"))
 add_pipeline(slide, top=c.take(Inches(2.6), label="pipeline"))
 ```
 
+> **Per-script `gap` tuning.** The default `Inches(0.12)` matches 14pt
+> Latin body copy. Decks that include CJK, Devanagari, Thai, or
+> Khmer need more breathing room — line clusters and stacked tone
+> marks bump the rendered line height. Pass an explicit `gap=` per
+> block, or override the `Cursor` default at the top of your export.
+> The full per-script table is in
+> [`font-discipline.md` § Line height per script](font-discipline.md).
+
 If a slide raises `OverflowError`, fix one of three things:
 
 1. **Reduce block height** — the box was generously sized; tighten to actual text height.

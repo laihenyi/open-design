@@ -27,6 +27,27 @@ font table.
 
 Don't rely on visual intuition; rely on grep.
 
+> **Coverage gap for Latin-slot scripts (Cyrillic / Greek / Vietnamese).**
+> Russian / Ukrainian / Greek runs go through `<a:latin>`, not `<a:ea>` —
+> they use the Latin slot. Many display fonts (Playfair Display, Source
+> Serif 4) ship with weak or missing Cyrillic / Greek glyphs, and most
+> drop Vietnamese Extended diacritics (ếẫỡỗ). PowerPoint silently falls
+> back to Calibri / Times New Roman per missing glyph, producing
+> mid-paragraph face shifts that look like a styling bug.
+>
+> When mapping a CSS class to a Latin font, check the font actually
+> covers your scripts:
+>
+> ```bash
+> # macOS / Linux: list the unicode blocks a font supports
+> fc-query -f '%{charset}\n' "$(fc-match -f '%{file}\n' 'Playfair Display')" | head
+> # Or open in fontforge → Element → Font Info → check OS/2 Unicode ranges
+> ```
+>
+> If coverage is missing, either swap to a face that has it (e.g.
+> Inter / IBM Plex Sans for Cyrillic; Be Vietnam Pro for Vietnamese) or
+> set a different `<a:latin>` per language run.
+
 ## Layer 2 — Font presence on the rendering machine
 
 PowerPoint uses the OS font cache. If the family name in your XML isn't
@@ -148,10 +169,14 @@ def set_run_fonts(run, latin: str | None = None, ea: str | None = None, cs: str 
 PptxGenJS sets all three by default; raw XML injection or python-pptx
 without explicit `ea` slot does not.
 
-## Layer 5 — CJK + Latin italic interaction
+## Layer 5 — Italic + script interaction
 
-🚨 **Never apply Latin italic + `italic=True` to runs containing CJK
-characters.** The chain of failures:
+🚨 **`italic=True` is a Latin-script feature.** Apply it only to runs
+whose characters belong to scripts where italic is part of the writing
+tradition (Latin, Cyrillic, Greek). For everything else — CJK, Arabic,
+Hebrew, Devanagari, Thai, Khmer — PowerPoint synthesizes a slanted
+bitmap that looks mechanically deformed. The chain of failures, using
+CJK as the canonical example:
 
 1. `<a:latin>` slot has Playfair Display Italic (a Latin-only font).
 2. The CJK characters in the run have no glyph in Playfair → PowerPoint
@@ -160,32 +185,100 @@ characters.** The chain of failures:
    real CJK italic exists, PowerPoint synthesizes a slanted bitmap →
    characters look mechanically deformed.
 
-**Rule:** italic only applies to Latin display copy. Indicate emphasis
-on CJK runs via:
+The same pattern triggers for Arabic, Hebrew, Devanagari, and Thai —
+none of these scripts has an italic tradition, and faking it produces
+a slant that's visually broken.
+
+**Rule:** italic only applies to runs whose primary script supports it
+(Latin / Cyrillic / Greek). Indicate emphasis on other scripts via:
 
 - color tone (`COLOR_INK_60` for muted, full ink for emphasis)
 - weight contrast (Regular 400 vs. Bold 700)
-- a CJK serif italic variant **only if one actually ships** — most
+- a script-native italic variant **only if one actually ships** — most
   don't
 
 Practical implementation:
 
 ```python
-def add_run_with_italic_safety(p, text, *, latin_face: str, cjk_face: str,
-                               size_pt: int, italic: bool, **kwargs):
-    """If italic=True but text contains CJK, drop italic on the CJK portion."""
-    has_cjk = any(0x3400 <= ord(c) <= 0x9FFF or 0xF900 <= ord(c) <= 0xFAFF for c in text)
+# Unicode ranges where italic should be suppressed.
+NO_ITALIC_RANGES = (
+    (0x3400, 0x9FFF),    # CJK Unified Ideographs
+    (0xF900, 0xFAFF),    # CJK Compatibility Ideographs
+    (0x3040, 0x30FF),    # Hiragana + Katakana
+    (0xAC00, 0xD7AF),    # Hangul Syllables
+    (0x0590, 0x05FF),    # Hebrew
+    (0x0600, 0x06FF),    # Arabic
+    (0x0750, 0x077F),    # Arabic Supplement
+    (0x0900, 0x097F),    # Devanagari
+    (0x0980, 0x09FF),    # Bengali
+    (0x0E00, 0x0E7F),    # Thai
+    (0x1780, 0x17FF),    # Khmer
+)
+
+
+def has_no_italic_script(text: str) -> bool:
+    return any(
+        any(lo <= ord(c) <= hi for lo, hi in NO_ITALIC_RANGES)
+        for c in text
+    )
+
+
+def add_run_with_italic_safety(p, text, *, latin_face: str, ea_face: str,
+                               cs_face: str | None, size_pt: int,
+                               italic: bool, **kwargs):
+    """Drop italic if the run contains characters from scripts without italic tradition."""
     r = p.add_run()
     r.text = text
     r.font.size = Pt(size_pt)
-    r.font.italic = italic and not has_cjk
-    set_run_fonts(r, latin=latin_face, ea=cjk_face)
+    r.font.italic = italic and not has_no_italic_script(text)
+    set_run_fonts(r, latin=latin_face, ea=ea_face, cs=cs_face)
     return r
 ```
 
 For mixed-script runs (e.g. `"In <em>2026</em> 開始"`), split into
 multiple runs at language boundaries so the italic attribute can apply
 to the Latin run only.
+
+## Beyond CJK — other scripts
+
+The five layers above are written in CJK examples because that's the
+most common pairing in Open Design today, but the same machinery
+applies to other scripts. Quick reference:
+
+| Script family            | XML slot   | Italic OK? | Most common defect                                                                  | Recommended faces                                |
+| ------------------------ | ---------- | ---------- | ----------------------------------------------------------------------------------- | ------------------------------------------------ |
+| Latin (en, de, es, vi…)  | `a:latin`  | ✅          | Vietnamese Extended diacritics dropped → fallback Calibri mid-paragraph             | Be Vietnam Pro, IBM Plex Sans, Source Sans 3     |
+| Cyrillic (ru, uk, bg)    | `a:latin`  | ✅          | Display fonts (Playfair, Source Serif) lack Cyrillic → fallback Calibri             | Inter, IBM Plex Sans, Roboto                     |
+| Greek (el)               | `a:latin`  | ✅          | Same as Cyrillic — display faces missing Greek → fallback                           | Inter, IBM Plex Sans                             |
+| CJK (zh, ja, ko)         | `a:ea`     | ❌          | Variable-font trap (Layer 3); missing `a:ea` slot → fallback Microsoft JhengHei     | Noto Sans CJK *, Source Han Sans, IBM Plex Sans JP |
+| Arabic / Hebrew / Persian | `a:cs`    | ❌          | `<a:rtl val="1"/>` not set → text direction breaks; kashida changes width           | Noto Naskh Arabic, IBM Plex Sans Arabic, Amiri   |
+| Devanagari / Bengali     | `a:cs`     | ❌          | PowerPoint defaults to Mangal/Vrinda (low fidelity); cluster shaping bumps line height | Noto Sans Devanagari, Mukta, Hind             |
+| Thai / Lao / Khmer       | `a:cs`     | ❌          | No inter-word spaces → PowerPoint's break engine produces poor wraps; tone marks bump line height | Noto Sans Thai, Sarabun, Noto Sans Khmer  |
+
+For RTL scripts (Arabic / Hebrew / Persian), set both `<a:cs typeface=…>`
+and `<a:rtl val="1"/>` on the run's `rPr`. Right-alignment, bidi text
+flow, and chrome / footer mirroring are out of scope for `verify_layout.py`
+today and need manual review — see the Tier 2 follow-up note in the
+audit checklist.
+
+## Line height per script
+
+The `Cursor.take(gap=Inches(0.12))` default suits 14pt Latin body copy.
+Other scripts need more vertical headroom because of stacked diacritics,
+matras, or tone marks:
+
+| Script                                   | Recommended `gap` at 14pt body |
+| ---------------------------------------- | ------------------------------ |
+| Latin (no Vietnamese Extended)           | `Inches(0.12)` (default)       |
+| Latin (with Vietnamese Extended ếẫỗ)     | `Inches(0.14)`                 |
+| CJK                                      | `Inches(0.14–0.16)`            |
+| Devanagari / Bengali (matras / conjuncts)| `Inches(0.16–0.18)`            |
+| Thai / Lao / Khmer (tone marks above)    | `Inches(0.16–0.18)`            |
+| Arabic / Hebrew                          | `Inches(0.13)`                 |
+
+When the deck mixes scripts, take the max — line breathing-room is
+visual, an under-spaced Thai run in an otherwise Latin deck reads as
+"the Thai slide is broken".
 
 ## Audit checklist
 
@@ -201,8 +294,13 @@ After re-export, confirm all five layers:
 - [ ] Layer 4: `unzip + grep typeface` returns only the design-system
       fonts. No `Microsoft JhengHei` / `Calibri` / `Arial` / `Georgia`
       / `Consolas` residue.
-- [ ] Layer 5: No CJK-containing run has `italic=True` set with a
-      Latin italic face in the `<a:latin>` slot.
+- [ ] Layer 5: No run from a no-italic script (CJK / Arabic / Hebrew /
+      Devanagari / Thai) has `italic=True` set with a Latin italic
+      face in the `<a:latin>` slot.
+- [ ] **Beyond CJK:** RTL slides set `<a:rtl val="1"/>` on the
+      paragraph's `pPr`. Cursor `gap` is bumped per the line-height
+      table above when the deck includes Vietnamese, Devanagari, Thai,
+      or Khmer content.
 
 If all five pass and the user still reports "the type looks wrong",
 ask for a screenshot pointing at the specific glyph or word — the
