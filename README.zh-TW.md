@@ -603,7 +603,7 @@ OD 不只到程式碼為止。同一套產出 `<artifact>` HTML 的 chat 入口�
 
 ### HyperFrames —— HTML→MP4 動態圖形（11 條可一鍵複刻樣板）
 
-[**`heygen-com/hyperframes`**](https://github.com/heygen-com/hyperframes) 是 HeyGen 開源的 agent-native 影片框架 —— 你（或 agent）寫 HTML + CSS + GSAP，HyperFrames 透過 headless Chrome + FFmpeg 確定性地渲成 MP4。Open Design 把 HyperFrames 接成一等視訊模型（`hyperframes-html`），掛進 daemon dispatch；同時帶上 `skills/hyperframes/` 這個 skill，把 timeline 合約、scene transition 規則、audio-reactive 模式、字幕 / TTS、目錄塊（`npx hyperframes add <slug>`）一起教給 agent。
+[**`heygen-com/hyperframes`**](https://github.com/heygen-com/hyperframes) 是 HeyGen 開源的 agent-native 影片框架 —— 你（或 agent）寫 HTML + CSS + GSAP，HyperFrames 透過 headless Chrome + FFmpeg 確定性地渲成 MP4。Open Design 把 HyperFrames 接成一等影片模型（`hyperframes-html`），掛進 daemon dispatch；同時帶上 `skills/hyperframes/` 這個 skill，把 timeline 合約、scene transition 規則、audio-reactive 模式、字幕 / TTS、目錄元件（`npx hyperframes add <slug>`）一起教給 agent。
 
 11 條 HyperFrames prompt 放在 [`prompt-templates/video/hyperframes-*.json`](prompt-templates/video/)，每一條都是產生具體某個原型的明確 brief：
 
@@ -628,7 +628,7 @@ OD 不只到程式碼為止。同一套產出 `<artifact>` HTML 的 chat 入口�
 </tr>
 </table>
 
-流程跟其它一樣：挑樣板、改 brief、送出。Agent 讀取自帶的 `skills/hyperframes/SKILL.md`（裡面帶 OD 專用的渲染流程 —— composition 原始檔落到 `.hyperframes-cache/`，避免汙染檔案工作區；daemon 替你觸發 `npx hyperframes render`，繞開 macOS sandbox-exec / Puppeteer 卡死；最終只有 `.mp4` 作為專案 chip 出現），寫完 composition、產出 MP4。目錄塊縮圖版權歸 HeyGen，由他們的 CDN 回源；OSS 框架本身是 Apache-2.0。
+流程跟其它一樣：挑樣板、改 brief、送出。Agent 讀取自帶的 `skills/hyperframes/SKILL.md`（裡面帶 OD 專用的渲染流程 —— composition 原始檔落到 `.hyperframes-cache/`，避免汙染檔案工作區；daemon 替你觸發 `npx hyperframes render`，繞開 macOS sandbox-exec / Puppeteer 卡死；最終只有 `.mp4` 作為專案 chip 出現），寫完 composition、產出 MP4。目錄元件縮圖版權歸 HeyGen，由 HeyGen 的 CDN 提供；OSS 框架本身是 Apache-2.0。
 
 > **已經接好但還沒出 prompt 樣板的：** Kling 2.0 / 1.6 / 1.5、Veo 3 / Veo 2、Sora 2 / Sora 2-Pro（via Fal）、MiniMax video-01 —— 都在 `VIDEO_MODELS`（[`apps/web/src/media/models.ts`](apps/web/src/media/models.ts)）裡。Suno v5 / v4.5、Udio v2、Lyria 2（音樂）和 gpt-4o-mini-tts、MiniMax TTS（語音）覆蓋音訊側。補全這些模型的 prompt 樣板屬於開放貢獻 —— 把 JSON 放進 `prompt-templates/video/` 或 `prompt-templates/audio/`，picker 裡就能直接看到。
 
@@ -799,7 +799,7 @@ Daemon 啟動時從 `PATH` 自動檢測，無需配置。流式分發邏輯在 [
 
 ## 致謝 / Credits
 
-[`skills/html-ppt/`](skills/html-ppt/) 主 skill 以及 [`skills/html-ppt-*/`](skills/) 下的逐樣板子 skill —— 含 15 套 full-deck、36 套主題、31 個單頁 layout、27 個 CSS 動畫 + 20 個 canvas FX、鍵盤 runtime 與磁吸卡片演講者模式 —— 整合自開源專案 [`lewislulu/html-ppt-skill`](https://github.com/lewislulu/html-ppt-skill)（MIT）。原始 LICENSE 保留在 [`skills/html-ppt/LICENSE`](skills/html-ppt/LICENSE)，原作者歸屬 [@lewislulu](https://github.com/lewislulu)。每張逐樣板的 Examples 卡片（`html-ppt-pitch-deck`、`html-ppt-tech-sharing`、`html-ppt-presenter-mode`、`html-ppt-xhs-post` …）都把 authoring 指南委派給主 skill —— 點 **Use this prompt** 之後，沿用上游同樣的 prompt → 產物路徑。
+[`skills/html-ppt/`](skills/html-ppt/) 主 skill 以及 [`skills/html-ppt-*/`](skills/) 下的逐樣板子 skill —— 含 15 套 full-deck、36 套主題、31 個單頁 layout、27 個 CSS 動畫 + 20 個 canvas FX、鍵盤 runtime 與磁吸卡片演講者模式 —— 整合自開源專案 [`lewislulu/html-ppt-skill`](https://github.com/lewislulu/html-ppt-skill)（MIT）。原始 LICENSE 保留在 [`skills/html-ppt/LICENSE`](skills/html-ppt/LICENSE)，原作者歸屬 [@lewislulu](https://github.com/lewislulu)。每張逐樣板的 Examples 卡片（`html-ppt-pitch-deck`、`html-ppt-tech-sharing`、`html-ppt-presenter-mode`、`html-ppt-xhs-post` …）都把 authoring 指南委派給主 skill —— 點 **Use this prompt** 之後，沿用上游同樣的 prompt → 輸出行為。
 
 [`skills/guizang-ppt/`](skills/guizang-ppt/) 雜誌風橫向翻頁 deck 整合自 [`op7418/guizang-ppt-skill`](https://github.com/op7418/guizang-ppt-skill)（MIT），原作者歸屬 [@op7418](https://github.com/op7418)。
 
