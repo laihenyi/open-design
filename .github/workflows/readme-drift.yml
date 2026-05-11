@@ -90,6 +90,8 @@ jobs:
       - name: Post PR comment
         if: steps.drift.outputs.has_drift == 'true'
         uses: actions/github-script@v7
+        env:
+          DRIFT_OUTPUT: ${{ steps.drift.outputs.drift }}
         with:
           script: |
             const body = [
@@ -105,7 +107,6 @@ jobs:
               '> To update, find your locale in the table above and bump the `l10n-source-commit` annotation.',
             ].join('\n');
 
-            const { DATA: commentBody } = process.env;
             const { number: prNumber } = context.payload.pull_request;
             const { owner, repo } = context.repo;
 
@@ -206,6 +207,11 @@ jobs:
 
       - name: Upsert tracking issue
         uses: actions/github-script@v7
+        env:
+          HEAD_SHA: ${{ steps.state.outputs.head_sha }}
+          TOTAL_H2: ${{ steps.state.outputs.total_h2 }}
+          DRIFT_MARKDOWN: ${{ steps.state.outputs.drift_md }}
+          TOTAL_BEHIND: ${{ steps.state.outputs.total_behind }}
         with:
           script: |
             const { owner, repo } = context.repo;
