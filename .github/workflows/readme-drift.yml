@@ -270,7 +270,21 @@ jobs:
             const ours = existing.data.find(i => i.title.startsWith('README locales out of sync'));
 
             if (ours) {
-              // Append new snapshot as comment, then update body with collapsed history
+              // Append a history comment before updating body (preserves prior snapshots)
+              const historyComment = [
+                `### Snapshot — ${weekOf}`,
+                '',
+                `**Source:** \`README.md\` @ [\`${headSha.slice(0, 7)}\`](https://github.com/${owner}/${repo}/commit/${headSha}) · ${totalH2} H2 · ${totalBehind} behind`,
+                '',
+                driftMd || '- (no locale READMEs found)',
+              ].join('\n');
+
+              await github.rest.issues.createComment({
+                owner, repo,
+                issue_number: ours.number,
+                body: historyComment,
+              });
+
               const newBody = [
                 '## 📖 README Locale Sync Status — latest',
                 '',
