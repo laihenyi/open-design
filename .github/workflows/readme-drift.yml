@@ -9,6 +9,7 @@ on:
     - cron: '0 9 * * 1'
 
 permissions:
+  contents: read
   pull-requests: write
   issues: write
 
@@ -20,6 +21,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Detect drifting locales
         id: drift
@@ -58,22 +61,26 @@ jobs:
               continue
             fi
 
-            # Check if the annotated SHA exists in history (handle rebased branches)
-            if ! git rev-list --quiet "$annotated_sha" -1 2>/dev/null; then
+            # Validate SHA format (7-40 hex chars)
+            if ! [[ "$annotated_sha" =~ ^[0-9a-f]{7,40}$ ]]; then
+              DRIFT_OUTPUT+="- **$locale** — invalid annotation format, cannot compare\n"
               continue
             fi
 
-            # Count H2 sections that differ between annotated SHA and HEAD
-            h2_annotated=$(git diff "$annotated_sha" HEAD -- "$SOURCE_FILE" 2>/dev/null | grep '^+## ' | wc -l || true)
-            h2_head=$(git diff "$annotated_sha" HEAD -- "$SOURCE_FILE" 2>/dev/null | grep '^-## ' | wc -l || true)
+            # Verify annotated SHA is a commit ancestor of HEAD
+            if ! git merge-base --is-ancestor "$annotated_sha" HEAD 2>/dev/null; then
+              DRIFT_OUTPUT+="- **$locale** — annotated SHA \`$annotated_sha\` is not an ancestor of HEAD (branch may have been force-pushed)\n"
+              continue
+            fi
 
-            # Total number of H2 sections in HEAD (for context)
-            total_h2=$(grep -c '^## ' "$SOURCE_FILE" 2>/dev/null || echo 0)
-
-            behind_count=$((h2_annotated > h2_head ? h2_annotated : h2_head))
-
-            if [[ "$behind_count" -gt 0 ]]; then
-              DRIFT_OUTPUT+="- **$locale** — ~$behind_count H2 sections behind\n"
+            # Any content diff since annotation → locale is behind
+            has_diff=$(git diff "$annotated_sha" HEAD -- "$SOURCE_FILE" 2>/dev/null | grep -c '^[+-]' || true)
+            if [[ "$has_diff" -gt 0 ]]; then
+              # Count H2 sections added/removed for human-readable summary
+              h2_added=$(git diff "$annotated_sha" HEAD -- "$SOURCE_FILE" 2>/dev/null | grep '^+## ' | wc -l || true)
+              h2_removed=$(git diff "$annotated_sha" HEAD -- "$SOURCE_FILE" 2>/dev/null | grep '^-## ' | wc -l || true)
+              behind_count=$((h2_added > h2_removed ? h2_added : h2_removed))
+              DRIFT_OUTPUT+="- **$locale** — $behind_count H2 section(s) behind (annotated \`$annotated_sha\`)\n"
             else
               UP_TO_DATE+="- $locale ✅\n"
             fi
@@ -89,6 +96,7 @@ jobs:
 
       - name: Post PR comment
         if: steps.drift.outputs.has_drift == 'true'
+        continue-on-error: true
         uses: actions/github-script@v7
         env:
           DRIFT_OUTPUT: ${{ steps.drift.outputs.drift }}
@@ -143,6 +151,21 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ensure locale-drift label exists
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const labelName = 'locale-drift';
+            try {
+              await github.rest.issues.getLabel({ owner, repo, name: labelName });
+            } catch {
+              // Label doesn't exist — create it
+              await github.rest.issues.createLabel({ owner, repo, name: labelName, color: 'ff6b6b', description: 'Tracks README locale drift detection workflow state' });
+            }
 
       - name: Compute drift state
         id: state
@@ -180,17 +203,23 @@ jobs:
               continue
             fi
 
-            if ! git rev-list --quiet "$annotated_sha" -1 2>/dev/null; then
-              DRIFT_MARKDOWN+="- [ ] **$locale** — annotated SHA `$annotated_sha` not in history (may have been rebased)\n"
+            # Validate SHA format
+            if ! [[ "$annotated_sha" =~ ^[0-9a-f]{7,40}$ ]]; then
+              DRIFT_MARKDOWN+="- [ ] **$locale** — invalid annotation format\n"
               continue
             fi
 
-            # H2 sections added in HEAD vs annotated (new sections upstream added)
-            h2_added=$(git diff "$annotated_sha" HEAD -- "$SOURCE_FILE" 2>/dev/null | grep '^+## ' | wc -l || true)
-            h2_removed=$(git diff "$annotated_sha" HEAD -- "$SOURCE_FILE" 2>/dev/null | grep '^-## ' | wc -l || true)
-            behind=$((h2_added > h2_removed ? h2_added : h2_removed))
+            if ! git merge-base --is-ancestor "$annotated_sha" HEAD 2>/dev/null; then
+              DRIFT_MARKDOWN+="- [ ] **$locale** — annotated SHA \`$annotated_sha\` not an ancestor of HEAD\n"
+              continue
+            fi
 
-            if [[ "$behind" -gt 0 ]]; then
+            # Any content diff → behind
+            has_diff=$(git diff "$annotated_sha" HEAD -- "$SOURCE_FILE" 2>/dev/null | grep -c '^[+-]' || true)
+            if [[ "$has_diff" -gt 0 ]]; then
+              h2_added=$(git diff "$annotated_sha" HEAD -- "$SOURCE_FILE" 2>/dev/null | grep '^+## ' | wc -l || true)
+              h2_removed=$(git diff "$annotated_sha" HEAD -- "$SOURCE_FILE" 2>/dev/null | grep '^-## ' | wc -l || true)
+              behind=$((h2_added > h2_removed ? h2_added : h2_removed))
               DRIFT_MARKDOWN+="- [ ] **$locale** — $behind H2 section(s) behind (annotated SHA: \`$annotated_sha\`)\n"
               TOTAL_BEHIND=$((TOTAL_BEHIND + 1))
             else
@@ -216,23 +245,18 @@ jobs:
           script: |
             const { owner, repo } = context.repo;
             const weekOf = new Date().toISOString().slice(0, 10);
-            const title = `README locales out of sync — week of ${weekOf}`;
-            const headSha = process.env.HEAD_SHA;
-            const totalH2 = process.env.TOTAL_H2;
+            const headSha = process.env.HEAD_SHA || '';
+            const totalH2 = process.env.TOTAL_H2 || '0';
             const driftMd = process.env.DRIFT_MARKDOWN || '';
             const totalBehind = parseInt(process.env.TOTAL_BEHIND || '0', 10);
 
-            const body = [
-              '## 📖 README Locale Sync Status',
+            const currentSnapshot = [
+              `### ${weekOf}`,
               '',
-              `**Source:** \`README.md\` @ [\`${headSha.slice(0, 7)}\`](https://github.com/${owner}/${repo}/commit/${headSha}) · $totalH2 H2 sections total',
-              '',
-              '### Locale checklist',
+              `**Source:** \`README.md\` @ [\`${headSha.slice(0, 7)}\`](https://github.com/${owner}/${repo}/commit/${headSha}) · ${totalH2} H2 sections total · ${totalBehind} locale(s) behind`,
               '',
               driftMd || '- (no locale READMEs found)',
               '',
-              '---',
-              '*Auto-generated by [`.github/workflows/readme-drift.yml`](.github/workflows/readme-drift.yml) ·兑*',
             ].join('\n');
 
             // Look for an existing tracking issue
@@ -246,17 +270,36 @@ jobs:
             const ours = existing.data.find(i => i.title.startsWith('README locales out of sync'));
 
             if (ours) {
+              // Append new snapshot as comment, then update body with collapsed history
+              const newBody = [
+                '## 📖 README Locale Sync Status — latest',
+                '',
+                currentSnapshot,
+                '',
+                '---',
+                '*Auto-generated by [`.github/workflows/readme-drift.yml`](.github/workflows/readme-drift.yml) ·兑*',
+              ].join('\n');
+
               await github.rest.issues.update({
                 owner, repo,
                 issue_number: ours.number,
-                title,
-                body,
+                title: `README locales out of sync — week of ${weekOf}`,
+                body: newBody,
               });
             } else {
-              const created = await github.rest.issues.create({
+              const newBody = [
+                '## 📖 README Locale Sync Status — latest',
+                '',
+                currentSnapshot,
+                '',
+                '---',
+                '*Auto-generated by [`.github/workflows/readme-drift.yml`](.github/workflows/readme-drift.yml) ·兑*',
+              ].join('\n');
+
+              await github.rest.issues.create({
                 owner, repo,
-                title,
-                body,
+                title: `README locales out of sync — week of ${weekOf}`,
+                body: newBody,
                 labels: ['locale-drift'],
               });
             }
