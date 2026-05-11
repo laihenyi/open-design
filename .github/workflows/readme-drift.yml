@@ -1,0 +1,256 @@
+name: README Locale Drift
+
+on:
+  pull_request:
+    paths:
+      - 'README.md'
+  schedule:
+    # Every Monday at 09:00 UTC
+    - cron: '0 9 * * 1'
+
+permissions:
+  pull-requests: write
+  issues: write
+
+jobs:
+  # ─── PR trigger: comment on README.md PRs with behind-locale summary ───
+  pr-comment:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect drifting locales
+        id: drift
+        run: |
+          set -euo pipefail
+
+          readonly HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          readonly SOURCE_FILE="README.md"
+
+          # Map locale suffix → README file
+          declare -A LOCALES=(
+            [ar]="README.ar.md"
+            [de]="README.de.md"
+            [es]="README.es.md"
+            [fr]="README.fr.md"
+            [ja-JP]="README.ja-JP.md"
+            [ko]="README.ko.md"
+            [pt-BR]="README.pt-BR.md"
+            [ru]="README.ru.md"
+            [tr]="README.tr.md"
+            [uk]="README.uk.md"
+            [zh-CN]="README.zh-CN.md"
+            [zh-TW]="README.zh-TW.md"
+          )
+
+          DRIFT_OUTPUT=""
+          UP_TO_DATE=""
+
+          for locale in "${!LOCALES[@]}"; do
+            readme="${LOCALES[$locale]}"
+
+            # Read the annotated SHA from the translated README
+            annotated_sha=$(grep -m1 'l10n-source-commit:' "$readme" 2>/dev/null | sed 's/.*l10n-source-commit: //' | tr -d ' ')
+            if [[ -z "$annotated_sha" ]]; then
+              # No annotation yet — skip rather than false positive
+              continue
+            fi
+
+            # Check if the annotated SHA exists in history (handle rebased branches)
+            if ! git rev-list --quiet "$annotated_sha" -1 2>/dev/null; then
+              continue
+            fi
+
+            # Count H2 sections that differ between annotated SHA and HEAD
+            h2_annotated=$(git diff "$annotated_sha" HEAD -- "$SOURCE_FILE" 2>/dev/null | grep '^+## ' | wc -l || true)
+            h2_head=$(git diff "$annotated_sha" HEAD -- "$SOURCE_FILE" 2>/dev/null | grep '^-## ' | wc -l || true)
+
+            # Total number of H2 sections in HEAD (for context)
+            total_h2=$(grep -c '^## ' "$SOURCE_FILE" 2>/dev/null || echo 0)
+
+            behind_count=$((h2_annotated > h2_head ? h2_annotated : h2_head))
+
+            if [[ "$behind_count" -gt 0 ]]; then
+              DRIFT_OUTPUT+="- **$locale** — ~$behind_count H2 sections behind\n"
+            else
+              UP_TO_DATE+="- $locale ✅\n"
+            fi
+          done
+
+          echo "drift<<EOF" >> "$GITHUB_OUTPUT"
+          echo -e "${DRIFT_OUTPUT:-None}"
+          echo "EOF"
+          echo "up_to_date<<EOF" >> "$GITHUB_OUTPUT"
+          echo -e "${UP_TO_DATE:-All locales up to date}"
+          echo "EOF"
+          echo "has_drift=$([[ -n "$DRIFT_OUTPUT" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - name: Post PR comment
+        if: steps.drift.outputs.has_drift == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = [
+              '## 📖 README Locale Drift Detected',
+              '',
+              'This PR touched `README.md`. The following locale READMEs are behind the current HEAD:',
+              '',
+              '```',
+              process.env.DRIFT_OUTPUT,
+              '```',
+              '',
+              '> ℹ️ This is a passive signal — not a merge blocker. Locale maintainers sync at their own pace.',
+              '> To update, find your locale in the table above and bump the `l10n-source-commit` annotation.',
+            ].join('\n');
+
+            const { DATA: commentBody } = process.env;
+            const { number: prNumber } = context.payload.pull_request;
+            const { owner, repo } = context.repo;
+
+            // Check if we already commented
+            const existing = await github.rest.issues.listComments({
+              owner, repo,
+              issue_number: prNumber,
+              per_page: 50,
+            });
+
+            const ourComment = existing.data.find(c =>
+              c.user.login === 'github-actions[bot]' &&
+              c.body.includes('README Locale Drift Detected')
+            );
+
+            if (ourComment) {
+              await github.rest.issues.updateComment({
+                owner, repo,
+                comment_id: ourComment.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner, repo,
+                issue_number: prNumber,
+                body,
+              });
+            }
+
+  # ─── Cron trigger: open/update rolling tracking issue ───
+  track:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute drift state
+        id: state
+        run: |
+          set -euo pipefail
+
+          readonly HEAD_SHA=$(git rev-parse HEAD)
+          readonly SOURCE_FILE="README.md"
+          readonly TOTAL_H2=$(grep -c '^## ' "$SOURCE_FILE" 2>/dev/null || echo 0)
+
+          declare -A LOCALES=(
+            [ar]="README.ar.md"
+            [de]="README.de.md"
+            [es]="README.es.md"
+            [fr]="README.fr.md"
+            [ja-JP]="README.ja-JP.md"
+            [ko]="README.ko.md"
+            [pt-BR]="README.pt-BR.md"
+            [ru]="README.ru.md"
+            [tr]="README.tr.md"
+            [uk]="README.uk.md"
+            [zh-CN]="README.zh-CN.md"
+            [zh-TW]="README.zh-TW.md"
+          )
+
+          DRIFT_MARKDOWN=""
+          TOTAL_BEHIND=0
+
+          for locale in "${!LOCALES[@]}"; do
+            readme="${LOCALES[$locale]}"
+
+            annotated_sha=$(grep -m1 'l10n-source-commit:' "$readme" 2>/dev/null | sed 's/.*l10n-source-commit: //' | tr -d ' ')
+            if [[ -z "$annotated_sha" ]]; then
+              DRIFT_MARKDOWN+="- [ ] **$locale** — no source commit annotated yet\n"
+              continue
+            fi
+
+            if ! git rev-list --quiet "$annotated_sha" -1 2>/dev/null; then
+              DRIFT_MARKDOWN+="- [ ] **$locale** — annotated SHA `$annotated_sha` not in history (may have been rebased)\n"
+              continue
+            fi
+
+            # H2 sections added in HEAD vs annotated (new sections upstream added)
+            h2_added=$(git diff "$annotated_sha" HEAD -- "$SOURCE_FILE" 2>/dev/null | grep '^+## ' | wc -l || true)
+            h2_removed=$(git diff "$annotated_sha" HEAD -- "$SOURCE_FILE" 2>/dev/null | grep '^-## ' | wc -l || true)
+            behind=$((h2_added > h2_removed ? h2_added : h2_removed))
+
+            if [[ "$behind" -gt 0 ]]; then
+              DRIFT_MARKDOWN+="- [ ] **$locale** — $behind H2 section(s) behind (annotated SHA: \`$annotated_sha\`)\n"
+              TOTAL_BEHIND=$((TOTAL_BEHIND + 1))
+            else
+              DRIFT_MARKDOWN+="- [x] **$locale** — up to date ✅\n"
+            fi
+          done
+
+          echo "head_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+          echo "total_h2=$TOTAL_H2" >> "$GITHUB_OUTPUT"
+          echo "drift_md<<EOF" >> "$GITHUB_OUTPUT"
+          echo -e "$DRIFT_MARKDOWN"
+          echo "EOF"
+          echo "total_behind=$TOTAL_BEHIND" >> "$GITHUB_OUTPUT"
+
+      - name: Upsert tracking issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const weekOf = new Date().toISOString().slice(0, 10);
+            const title = `README locales out of sync — week of ${weekOf}`;
+            const headSha = process.env.HEAD_SHA;
+            const totalH2 = process.env.TOTAL_H2;
+            const driftMd = process.env.DRIFT_MARKDOWN || '';
+            const totalBehind = parseInt(process.env.TOTAL_BEHIND || '0', 10);
+
+            const body = [
+              '## 📖 README Locale Sync Status',
+              '',
+              `**Source:** \`README.md\` @ [\`${headSha.slice(0, 7)}\`](https://github.com/${owner}/${repo}/commit/${headSha}) · $totalH2 H2 sections total',
+              '',
+              '### Locale checklist',
+              '',
+              driftMd || '- (no locale READMEs found)',
+              '',
+              '---',
+              '*Auto-generated by [`.github/workflows/readme-drift.yml`](.github/workflows/readme-drift.yml) ·兑*',
+            ].join('\n');
+
+            // Look for an existing tracking issue
+            const existing = await github.rest.issues.listForRepo({
+              owner, repo,
+              labels: ['locale-drift'],
+              state: 'open',
+              per_page: 20,
+            });
+
+            const ours = existing.data.find(i => i.title.startsWith('README locales out of sync'));
+
+            if (ours) {
+              await github.rest.issues.update({
+                owner, repo,
+                issue_number: ours.number,
+                title,
+                body,
+              });
+            } else {
+              const created = await github.rest.issues.create({
+                owner, repo,
+                title,
+                body,
+                labels: ['locale-drift'],
+              });
+            }

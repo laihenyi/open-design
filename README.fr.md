@@ -1,3 +1,5 @@
+<!-- l10n-source-commit: 87a95b7fb4eeb0a5c954dbe0dea95b3fa5c0dc46 -->
+
 # Open Design
 
 > **L’alternative open source à [Claude Design][cd].** Local-first, déployable sur le web, BYOK à chaque couche : vos CLI de coding agents détectées automatiquement dans le `PATH` deviennent le design engine, piloté par les catalogues de **Skills** et de **Design Systems** du repo. Aucune CLI ? Le proxy BYOK multi-provider exécute la même boucle, sans spawn local.
