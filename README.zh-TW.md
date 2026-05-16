@@ -364,7 +364,7 @@ docker compose pull
 docker compose up -d
 ```
 
-進階 Docker 設定與環境變數請參閱 [`QUICKSTART.md`](QUICKSTART.md)。
+進階 Docker 設定與環境變數請參閱 [`QUICKSTART.zh-TW.md`](QUICKSTART.zh-TW.md)。
 
 ### 從原始碼執行
 
@@ -648,7 +648,7 @@ open-design/
 ├── README.de.md                   ← Deutsch
 ├── README.zh-CN.md                ← 简体中文
 ├── README.zh-TW.md                ← 本檔案
-├── QUICKSTART.md                  ← 跑 / 構建 / 部署
+├── QUICKSTART.zh-TW.md                  ← 跑 / 構建 / 部署
 ├── package.json                   ← 單 bin: od
 │
 ├── apps/
