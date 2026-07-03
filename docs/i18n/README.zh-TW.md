@@ -2,7 +2,7 @@
 
 > 🔥 **Open Design 0.10.0 正式發布：All-in-one 的 Agentic 設計工作台。** 設計的完整流程從此只需一個視窗——從一個模糊的想法出發，到發現參考、蒐集素材、互動式編輯、留言排入佇列、打磨動效，再交付給編輯器或 Code Agent，全程無須離開應用程式。搭配多會話並行，它不再只是一個助手，而是一支為你工作的本地設計團隊。[下載 0.10.0](https://github.com/nexu-io/open-design/releases) · [參與討論](https://github.com/nexu-io/open-design/discussions/4153)
 >
-> ⚡ **Open Design AMR（Agentic Model Router）——官方模型服務。** 一次儲值，即可在 Open Design 中直接使用 GPT、Claude、Gemini 與 DeepSeek：20+ 旗艦模型、零設定、依實際 token 用量計費。[立即體驗](https://open-design.ai/amr/)
+> ⚡ **Open Design AMR（Agentic Model Router）——官方模型服務。** 一次儲值，即可在 Open Design 中直接使用 GPT、Claude、Gemini 與 DeepSeek：20+ 旗艦模型、零設定、依實際 token 用量計費。[立即體驗](https://open-design.ai/amr/?utm_source=github&utm_medium=referral&utm_content=readme_try_amr)
 >
 > 🏅 **Open Design Fellow 計畫現已開放。** 如果你也相信設計應該是開放的——歡迎成為 Open Design Fellow，與核心團隊一同形塑這項產品，並協助更多人參與定義設計的未來。詳情請見 → [`MAINTAINERS.md`](../../MAINTAINERS.md) 與 [Discord](https://discord.gg/mHAjSMV6gz)。
 
@@ -11,9 +11,9 @@
 </p>
 
 <p align="center">
-  <a href="https://open-design.ai/">官方網站</a> ·
-  <a href="https://open-design.ai/">下載</a> ·
-  <a href="https://open-design.ai/amr/">Model Router</a> ·
+  <a href="https://open-design.ai/?utm_source=github&utm_medium=referral&utm_content=readme_website">官方網站</a> ·
+  <a href="https://open-design.ai/?utm_source=github&utm_medium=referral&utm_content=readme_download">下載</a> ·
+  <a href="https://open-design.ai/amr/?utm_source=github&utm_medium=referral&utm_content=readme_model_router">Model Router</a> ·
   <a href="https://discord.gg/mHAjSMV6gz">Discord</a> ·
   <a href="https://x.com/OpenDesignHQ">追蹤 @OpenDesignHQ</a>
 </p>
@@ -290,8 +290,8 @@ Open Design（OD）就是那個開源的替代方案。同樣的迴圈、同樣�
 
 使用 Open Design 最快的方式。無須 Node、無須 pnpm、無須 clone。
 
-- **macOS**（Apple Silicon · Intel x64）→ [**open-design.ai**](https://open-design.ai/) 或 [GitHub Releases](https://github.com/nexu-io/open-design/releases)
-- **Windows**（x64）→ [**open-design.ai**](https://open-design.ai/) 或 [GitHub Releases](https://github.com/nexu-io/open-design/releases)
+- **macOS**（Apple Silicon · Intel x64）→ [**open-design.ai**](https://open-design.ai/?utm_source=github&utm_medium=referral&utm_content=readme_download_macos) 或 [GitHub Releases](https://github.com/nexu-io/open-design/releases)
+- **Windows**（x64）→ [**open-design.ai**](https://open-design.ai/?utm_source=github&utm_medium=referral&utm_content=readme_download_windows) 或 [GitHub Releases](https://github.com/nexu-io/open-design/releases)
 - **Linux**（AppImage，選用通道）→ [GitHub Releases](https://github.com/nexu-io/open-design/releases)
 
 安裝後：應用程式會自動偵測你 `PATH` 上的每一個編碼 agent CLI、載入 100+ 個 skills 與 150 套設計系統，並讓你在入口視圖中輸入需求。
@@ -305,7 +305,16 @@ Open Design（OD）就是那個開源的替代方案。同樣的迴圈、同樣�
 od mcp install <agent>
 # <agent> = claude | codex | cursor | copilot | openclaw | antigravity | gemini
 #         | pi | vibe | hermes | cline | kimi | trae | opencode
+
+# Hosted equivalent for curl-based setup:
+curl -fsSL https://open-design.ai/install.sh | sh -s <agent>
 ```
+
+`install.sh` 是包在 `od mcp install` 外的輕量 shell wrapper；它的用途是讓 hosted URL 回傳 shell 指令、而非 landing page 的 HTML fallback，並在你的 shell 解析到非 Open Design 的 `od` 執行檔時快速失敗。
+
+> **WSL2 使用者：** 若你的編碼 agent CLI 跑在 WSL2 內，請先依照
+> [`WSL2 設定指南`](../../docs/wsl-setup.md) 操作。Linux 的 `/usr/bin/od` 可能會
+> 遮蔽 Open Design 的 `od` 指令。
 
 接著，在 agent 內：
 
@@ -326,6 +335,8 @@ docker compose up -d
 # open http://localhost:7456
 ```
 
+> **macOS 使用者：** 若網頁 UI 顯示 `Authorization: Bearer <OD_API_TOKEN> required`，原因是 Docker Desktop 的 bridge 網路。修正方式請參見 [Docker Desktop on macOS](../../deploy/README.md#docker-desktop-on-macos)。
+
 ### 🚀 部署到 Sealos
 
 [![Deploy on Sealos](https://sealos.io/Deploy-on-Sealos.svg)](https://sealos.io/products/app-store/open-design/)
@@ -341,7 +352,7 @@ corepack enable && pnpm install
 pnpm tools-dev run web
 ```
 
-Node `~24`、pnpm `10.33.x`。Windows 使用者請參見 [`docs/windows-troubleshooting.md`](../../docs/windows-troubleshooting.md)。完整快速開始、環境變數、Nix flake 與打包建置流程 → [`QUICKSTART.zh-TW.md`](QUICKSTART.zh-TW.md)。
+Node `~24`、pnpm `10.33.x`。WSL2 使用者請參見 [`docs/wsl-setup.md`](../../docs/wsl-setup.md)；原生 Windows 使用者請參見 [`docs/windows-troubleshooting.md`](../../docs/windows-troubleshooting.md)。完整快速開始、環境變數、Nix flake 與打包建置流程 → [`QUICKSTART.zh-TW.md`](QUICKSTART.zh-TW.md)。
 
 ### 完整工作流程——從需求到 artifact
 
