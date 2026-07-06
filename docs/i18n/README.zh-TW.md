@@ -1,8 +1,8 @@
 <h1 align="center">Open Design：開源的 Claude Design 替代方案</h1>
 
-> 🔥 **Open Design 0.10.0 正式發布：All-in-one 的 Agentic 設計工作台。** 設計的完整流程從此只需一個視窗——從一個模糊的想法出發，到發現參考、蒐集素材、互動式編輯、留言排入佇列、打磨動效，再交付給編輯器或 Code Agent，全程無須離開應用程式。搭配多會話並行，它不再只是一個助手，而是一支為你工作的本地設計團隊。[下載 0.10.0](https://github.com/nexu-io/open-design/releases) · [參與討論](https://github.com/nexu-io/open-design/discussions/4153)
+> 🔥 **Open Design 0.13.0 —— _Stay in Flow_ 正式發布。** 過去，長時間的設計工作階段總在每一次中斷時斷裂——執行遺失了進度，模型選擇器讓你只能用猜的，匯出還得多繞一道彎。0.13.0 讓工作階段持續存活：跨回合恢復 Codex / OpenCode / Pi / Open Design Cloud 的執行，更快選中合適的模型，並在不離開應用程式的情況下交付有截圖佐證的 PPTX / PDF。[下載 0.13.0](https://github.com/nexu-io/open-design/releases) · [發行說明](https://github.com/nexu-io/open-design/releases/tag/open-design-v0.13.0)
 >
-> ⚡ **Open Design AMR（Agentic Model Router）——官方模型服務。** 一次儲值，即可在 Open Design 中直接使用 GPT、Claude、Gemini 與 DeepSeek：20+ 旗艦模型、零設定、依實際 token 用量計費。[立即體驗](https://open-design.ai/amr/?utm_source=github&utm_medium=referral&utm_content=readme_try_amr)
+> ⚡ **Open Design Cloud——官方模型服務。** 一次儲值，即可在 Open Design 中直接使用 GPT、Claude、Gemini 與 DeepSeek：20+ 旗艦模型、零設定、依實際 token 用量計費。[立即體驗](https://open-design.ai/cloud/?utm_source=github&utm_medium=referral&utm_content=readme_try_cloud)
 >
 > 🏅 **Open Design Fellow 計畫現已開放。** 如果你也相信設計應該是開放的——歡迎成為 Open Design Fellow，與核心團隊一同形塑這項產品，並協助更多人參與定義設計的未來。詳情請見 → [`MAINTAINERS.md`](../../MAINTAINERS.md) 與 [Discord](https://discord.gg/mHAjSMV6gz)。
 
@@ -13,7 +13,7 @@
 <p align="center">
   <a href="https://open-design.ai/?utm_source=github&utm_medium=referral&utm_content=readme_website">官方網站</a> ·
   <a href="https://open-design.ai/?utm_source=github&utm_medium=referral&utm_content=readme_download">下載</a> ·
-  <a href="https://open-design.ai/amr/?utm_source=github&utm_medium=referral&utm_content=readme_model_router">Model Router</a> ·
+  <a href="https://open-design.ai/cloud/?utm_source=github&utm_medium=referral&utm_content=readme_cloud">Open Design Cloud</a> ·
   <a href="https://discord.gg/mHAjSMV6gz">Discord</a> ·
   <a href="https://x.com/OpenDesignHQ">追蹤 @OpenDesignHQ</a>
 </p>
@@ -25,19 +25,18 @@
   <a href="QUICKSTART.zh-TW.md"><img alt="quickstart" src="https://img.shields.io/badge/quickstart-3%20commands-green?style=flat" /></a>
 </p>
 
-<p align="center"><a href="../../README.md">English</a> · <a href="README.es.md">Español</a> · <a href="README.pt-BR.md">Português</a> · <a href="README.de.md">Deutsch</a> · <a href="README.fr.md">Français</a> · <a href="README.zh-CN.md">简体中文</a> · <b>繁體中文</b> · <a href="README.ko.md">한국어</a> · <a href="README.ja-JP.md">日本語</a> · <a href="README.ar.md">العربية</a> · <a href="README.ru.md">Русский</a> · <a href="README.uk.md">Українська</a> · <a href="README.tr.md">Türkçe</a></p>
+<p align="center"><a href="../../README.md">English</a> · <a href="README.es.md">Español</a> · <a href="README.pt-BR.md">Português</a> · <a href="README.de.md">Deutsch</a> · <a href="README.fr.md">Français</a> · <a href="README.zh-CN.md">简体中文</a> · <b>繁體中文</b> · <a href="README.ko.md">한국어</a> · <a href="README.ja-JP.md">日本語</a> · <a href="README.ar.md">العربية</a> · <a href="README.ru.md">Русский</a> · <a href="README.uk.md">Українська</a> · <a href="README.tr.md">Türkçe</a> · <a href="README.th.md">ภาษาไทย</a></p>
 
 ---
 
 ## 什麼是 Open Design
 
-🎨 **本地優先、開源的 [Claude Design][cd] 替代方案。** &nbsp;🖥️ **macOS 與 Windows 的原生桌面應用程式。** &nbsp;⚡ **100+ 個 skills** · ✨ **150 套品牌級 `DESIGN.md` 設計系統** · 📦 **261 個開箱即用的外掛。** &nbsp;🖼️ 可生成 **網頁 · 桌面 · 行動裝置原型**、**即時儀表板／artifacts**、**簡報**、**圖片**、**影片**，外加 **HyperFrames** 動態圖像。🔒 沙箱化 iframe 預覽 · 支援 HTML / PDF / PPTX / MP4 匯出。 &nbsp;🤖 **可在 Claude Code · OpenClaw · Codex · Cursor · OpenCode · Qwen · Copilot · Hermes · Kimi · Antigravity 等 21 個本地 CLI 上執行**，或透過 BYOK 接上任何相容 OpenAI 的端點。
+🎨 **本地優先、開源的 Claude Design 替代方案。** &nbsp;🖥️ **macOS 與 Windows 的原生桌面應用程式。** &nbsp;⚡ **100+ 個 skills** · ✨ **150 套品牌級 `DESIGN.md` 設計系統** · 📦 **261 個開箱即用的外掛。** &nbsp;🖼️ 可生成 **網頁 · 桌面 · 行動裝置原型**、**即時儀表板／artifacts**、**簡報**、**圖片**、**影片**，外加 **HyperFrames** 動態圖像。🔒 沙箱化 iframe 預覽 · 支援 HTML / PDF / PPTX / MP4 匯出。 &nbsp;🤖 **可在 Claude Code · OpenClaw · Codex · Cursor · OpenCode · Qwen · Copilot · Hermes · Kimi · Antigravity 等 21 個本地 CLI 上執行**，或透過 BYOK 接上任何相容 OpenAI 的端點。
 
 Open Design 是這樣誕生的：當 Anthropic 隨 Claude Design 推出的那套 **agent 原生** 迴圈——釐清需求、鎖定方向、串流產出 artifact、評析、交付——不再封閉，而是化為一個由 **skills、設計系統與外掛組成的檔案系統**，讓你筆電上既有的編碼 agent 都能讀取、寫入、再混搭。你的 CLI 成為設計引擎，你的筆電成為工作室，而你團隊的 `DESIGN.md` 則成為品牌契約。
 
 它同時也是 **agent 時代的 Figma 替代方案**——不必在畫布上推動像素，而是以真實 CSS、真實字型、真實元件交付單頁 artifact，直接匯出成 HTML / PDF / PPTX / MP4——這些產出早已由你的設計系統塑形，也早已能在你每天使用的 agent 中執行。
 
-[cd]: https://x.com/claudeai/status/2045156267690213649
 
 ---
 
@@ -258,7 +257,7 @@ adapter 契約與 stream parser 位於 [`apps/daemon/src/agents.ts`](../../apps/
 
 ## 為什麼選 Open Design
 
-> **2026 年 4 月，Anthropic 發表了 [Claude Design][cd]——這是 LLM 首次不再撰寫散文，而是直接交付設計 artifact。** 它爆紅。但它始終封閉原始碼、僅限付費、僅限雲端，並被綁死在 Anthropic 的模型、Anthropic 的 skills、Anthropic 的介面上。無法結帳、無法自架、無法部署到 Vercel、無法換上你自己的 agent。
+> **2026 年 4 月，Anthropic 發表了 Claude Design——這是 LLM 首次不再撰寫散文，而是直接交付設計 artifact。** 它爆紅。但它始終封閉原始碼、僅限付費、僅限雲端，並被綁死在 Anthropic 的模型、Anthropic 的 skills、Anthropic 的介面上。無法結帳、無法自架、無法部署到 Vercel、無法換上你自己的 agent。
 
 Open Design（OD）就是那個開源的替代方案。同樣的迴圈、同樣以 artifact 為先的思維模式，卻沒有任何鎖定：
 
@@ -271,7 +270,7 @@ Open Design（OD）就是那個開源的替代方案。同樣的迴圈、同樣�
 
 ### 比較
 
-| | [Claude Design][cd] | Figma | Lovable / v0 / Bolt | **Open Design** |
+| | Claude Design | Figma | Lovable / v0 / Bolt | **Open Design** |
 |---|---|---|---|---|
 | 開源 | ❌ | ❌ | ❌ | **✅ Apache-2.0** |
 | 自架／桌面 | ❌ | ❌ | ❌ | **✅ macOS + Windows + Vercel** |
@@ -588,7 +587,7 @@ pnpm guard && pnpm --filter @open-design/plugin-runtime typecheck
 - [x] Sidecar 協定 + Electron 桌面 + IPC 自動化
 - [x] Artifact lint API + 5 維自我評析的發出前閘門
 - [x] **0.8.0**——外掛市集基礎建設（261 個官方外掛、manifest 規格、各 agent 安裝腳本）
-- [x] **0.9.0**——Open Design AMR（內建於應用程式的官方 Model Router：零設定、一鍵登入）
+- [x] **0.9.0**——Open Design Cloud（內建於應用程式的官方 Model Router：零設定、一鍵登入）
 - [x] 打包的 Electron 建置——macOS（Apple Silicon + Intel）+ Windows（x64）+ Linux AppImage（選用通道）
 - [ ] 註解模式的精準編輯——部分完成；可靠的定點修補開發中
 - [ ] AI 發出的 tweaks 面板 UX——尚未實作
@@ -726,7 +725,7 @@ gh pr create --fill
 
 | 專案 | 角色 |
 |---|---|
-| [Claude Design][cd] | 本儲存庫作為開源替代方案所對應的那個閉源產品。 |
+| Claude Design | 本儲存庫作為開源替代方案所對應的那個閉源產品。 |
 | [`alchaincyf/huashu-design`](https://github.com/alchaincyf/huashu-design) | 設計哲學的指南針——junior 設計師工作流程、品牌素材協定、反 AI-slop 檢查清單、五維評析。 |
 | [`op7418/guizang-ppt-skill`](https://github.com/op7418/guizang-ppt-skill) | 雜誌風格網頁 PPT skill，原封不動地內建於 [`design-templates/guizang-ppt/`](../../design-templates/guizang-ppt/) 之下。為簡報模式的預設。 |
 | [`lewislulu/html-ppt-skill`](https://github.com/lewislulu/html-ppt-skill) | HTML PPT Studio 家族——15 套簡報範本、36 種主題、31 種頁面版面、動畫執行期、磁吸卡片簡報模式。 |
