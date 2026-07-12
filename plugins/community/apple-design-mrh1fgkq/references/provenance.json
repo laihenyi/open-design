@@ -1,0 +1,18 @@
+{
+  "candidateId": "3edf189e-df17-4dc3-83f1-a29b4db375e2",
+  "projectId": "eccebf2f-d2e2-42da-b261-a17ddb559793",
+  "runId": "a391778c-f633-404a-8d01-b180d37fd982",
+  "conversationId": "40a70925-aa9f-4b84-9ba3-38417489e33b",
+  "provenance": {
+    "summary": "Detected from https://github.com/emilkowalski/skills/blob/main/skills/apple-design/SKILL.md after a successful run.",
+    "detectedAt": 1783811980986
+  },
+  "sourceRefs": [
+    {
+      "kind": "url",
+      "value": "https://github.com/emilkowalski/skills/blob/main/skills/apple-design/SKILL.md",
+      "label": "https://github.com/emilkowalski/skills/blob/main/skills/apple-design/SKILL.md",
+      "reason": "Referenced repository or plugin-like URL."
+    }
+  ]
+}
