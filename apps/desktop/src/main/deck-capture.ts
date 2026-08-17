@@ -458,7 +458,7 @@ async function renderEditablePptx(
   // same scope as the serialized body so the references resolve inside the
   // render window.
   const out = (await window.webContents.executeJavaScript(
-    `(() => { const cjkPromotedFontFamily = ${cjkPromotedFontFamily.toString()}; const reduceBackgroundImageLayers = ${reduceBackgroundImageLayers.toString()}; const pseudoBorderNeedsMaterialization = ${pseudoBorderNeedsMaterialization.toString()}; return (${runDomToPptx.toString()})(${JSON.stringify(SLIDE_SELECTOR)}, ${JSON.stringify(importedStylesheetOverrides)}); })()`,
+    `(() => { const cjkPromotedFontFamily = ${cjkPromotedFontFamily.toString()}; const reduceBackgroundImageLayers = ${reduceBackgroundImageLayers.toString()}; const cssCommaListItem = ${cssCommaListItem.toString()}; const pseudoBorderNeedsMaterialization = ${pseudoBorderNeedsMaterialization.toString()}; return (${runDomToPptx.toString()})(${JSON.stringify(SLIDE_SELECTOR)}, ${JSON.stringify(importedStylesheetOverrides)}); })()`,
     true,
   )) as { b64?: string; error?: string };
   if (!out || out.error || !out.b64) {
@@ -1070,6 +1070,33 @@ export function cjkPromotedFontFamily(fontFamily: string, text: string): string 
   return [families[firstCjk], ...families.filter((_, i) => i !== firstCjk)].join(", ");
 }
 
+// Split a comma-separated CSS list (background-size/position/repeat/…) the same
+// way background-image layers are split: commas inside url()/gradient()/image-set()
+// do not count. Kept pure and self-contained so it can be unit-tested and
+// serialized into the export render window beside reduceBackgroundImageLayers.
+export function cssCommaListItem(list: string, index: number): string | null {
+  const input = (list || "").trim();
+  if (!input || index < 0) return null;
+  const items: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i];
+    if (ch === "(") depth += 1;
+    else if (ch === ")") depth = Math.max(0, depth - 1);
+    else if (ch === "," && depth === 0) {
+      items.push(input.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  items.push(input.slice(start).trim());
+  if (index < items.length) return items[index] || null;
+  // A single authored value is the usual form for every layer when the computed
+  // list has not been expanded to match background-image.
+  if (items.length === 1) return items[0] || null;
+  return null;
+}
+
 // dom-to-pptx claims gradient support but reads `background-image` with the
 // greedy regex `/linear-gradient\((.*)\)/` and a bare `includes('linear-gradient')`
 // guard, so ANY multi-layer background — the common
@@ -1079,15 +1106,21 @@ export function cjkPromotedFontFamily(fontFamily: string, text: string): string 
 // SVG. Reduce the computed value to the single bottom-most layer the engine can
 // faithfully render (a plain `linear-gradient(...)` or `url(...)`); when no layer
 // qualifies, drop the image and surface the first color found in the stack so the
-// caller can keep an equivalent solid fill. Kept pure and self-contained so it can
-// be both unit-tested and serialized into the export render window.
+// caller can keep an equivalent solid fill. selectedLayerIndex lets the caller
+// rewrite the matching background-size/position/repeat/origin/clip list item so
+// a leftover comma list is not passed to the engine as objectFit. Kept pure and
+// self-contained so it can be both unit-tested and serialized into the export
+// render window.
 export function reduceBackgroundImageLayers(backgroundImage: string): {
   changed: boolean;
   value: string;
   fallbackColor: string | null;
+  selectedLayerIndex: number | null;
 } {
   const input = (backgroundImage || "").trim();
-  if (!input || input === "none") return { changed: false, value: "none", fallbackColor: null };
+  if (!input || input === "none") {
+    return { changed: false, value: "none", fallbackColor: null, selectedLayerIndex: null };
+  }
   // Split into top-level layers; commas inside url()/gradient() color stops don't count.
   const layers: string[] = [];
   let depth = 0;
@@ -1106,16 +1139,23 @@ export function reduceBackgroundImageLayers(backgroundImage: string): {
   // engine converts faithfully — and only when they stand alone.
   const supported = (layer: string) => /^(?:linear-gradient|url)\(/i.test(layer);
   if (layers.length === 1 && supported(layers[0])) {
-    return { changed: false, value: input, fallbackColor: null };
+    return { changed: false, value: input, fallbackColor: null, selectedLayerIndex: 0 };
   }
   // CSS lists layers top-first, so the LAST supported layer is the visual base
   // (e.g. a dark scrim over `url(photo)` keeps the photo, not the scrim).
   for (let i = layers.length - 1; i >= 0; i--) {
-    if (supported(layers[i])) return { changed: true, value: layers[i], fallbackColor: null };
+    if (supported(layers[i])) {
+      return { changed: true, value: layers[i], fallbackColor: null, selectedLayerIndex: i };
+    }
   }
   const rgb = input.match(/rgba?\([^)]*\)/i);
   const hex = input.match(/#[0-9a-f]{3,8}\b/i);
-  return { changed: true, value: "none", fallbackColor: rgb ? rgb[0] : hex ? hex[0] : null };
+  return {
+    changed: true,
+    value: "none",
+    fallbackColor: rgb ? rgb[0] : hex ? hex[0] : null,
+    selectedLayerIndex: null,
+  };
 }
 
 export interface PseudoBorderSnapshot {
@@ -1471,6 +1511,18 @@ export async function runDomToPptx(
         const reduced = reduceBackgroundImageLayers(style.backgroundImage);
         if (!reduced.changed) continue;
         element.style.setProperty("background-image", reduced.value, "important");
+        if (reduced.selectedLayerIndex != null) {
+          const size = cssCommaListItem(style.backgroundSize, reduced.selectedLayerIndex);
+          if (size) element.style.setProperty("background-size", size, "important");
+          const position = cssCommaListItem(style.backgroundPosition, reduced.selectedLayerIndex);
+          if (position) element.style.setProperty("background-position", position, "important");
+          const repeat = cssCommaListItem(style.backgroundRepeat, reduced.selectedLayerIndex);
+          if (repeat) element.style.setProperty("background-repeat", repeat, "important");
+          const origin = cssCommaListItem(style.backgroundOrigin, reduced.selectedLayerIndex);
+          if (origin) element.style.setProperty("background-origin", origin, "important");
+          const clip = cssCommaListItem(style.backgroundClip, reduced.selectedLayerIndex);
+          if (clip) element.style.setProperty("background-clip", clip, "important");
+        }
         if (
           reduced.value === "none" &&
           reduced.fallbackColor &&
@@ -1542,6 +1594,12 @@ export async function runDomToPptx(
             ["border-left", `${ps.borderLeftWidth} ${ps.borderLeftStyle} ${ps.borderLeftColor}`],
             ["border-radius", ps.borderRadius],
             ["background-color", ps.backgroundColor],
+            ["background-image", ps.backgroundImage],
+            ["background-size", ps.backgroundSize],
+            ["background-position", ps.backgroundPosition],
+            ["background-repeat", ps.backgroundRepeat],
+            ["box-shadow", ps.boxShadow],
+            ["filter", ps.filter],
             ["transform", ps.transform],
             ["transform-origin", ps.transformOrigin],
             ["opacity", ps.opacity],
@@ -1551,7 +1609,11 @@ export async function runDomToPptx(
           for (const [prop, value] of copy) {
             if (value && value !== "auto") box.style.setProperty(prop, value, "important");
           }
-          element.appendChild(box);
+          if (pseudo === "::before") {
+            element.insertBefore(box, element.firstChild);
+          } else {
+            element.appendChild(box);
+          }
         }
       }
     }

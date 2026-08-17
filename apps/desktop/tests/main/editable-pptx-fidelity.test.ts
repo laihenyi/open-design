@@ -1,6 +1,9 @@
-import { describe, expect, test } from 'vitest';
+import { readFileSync } from 'node:fs';
+
+import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import {
+  cssCommaListItem,
   pseudoBorderNeedsMaterialization,
   reduceBackgroundImageLayers,
   runDomToPptx,
@@ -20,6 +23,7 @@ describe('reduceBackgroundImageLayers', () => {
       changed: false,
       value: input,
       fallbackColor: null,
+      selectedLayerIndex: 0,
     });
   });
 
@@ -29,6 +33,7 @@ describe('reduceBackgroundImageLayers', () => {
       changed: false,
       value: input,
       fallbackColor: null,
+      selectedLayerIndex: 0,
     });
   });
 
@@ -37,6 +42,7 @@ describe('reduceBackgroundImageLayers', () => {
       changed: false,
       value: 'none',
       fallbackColor: null,
+      selectedLayerIndex: null,
     });
   });
 
@@ -48,6 +54,7 @@ describe('reduceBackgroundImageLayers', () => {
       changed: true,
       value: linear,
       fallbackColor: null,
+      selectedLayerIndex: 1,
     });
   });
 
@@ -58,6 +65,7 @@ describe('reduceBackgroundImageLayers', () => {
       changed: true,
       value: url,
       fallbackColor: null,
+      selectedLayerIndex: 1,
     });
   });
 
@@ -68,6 +76,7 @@ describe('reduceBackgroundImageLayers', () => {
     const out = reduceBackgroundImageLayers(input);
     expect(out.changed).toBe(true);
     expect(out.value).toBe('linear-gradient(0deg, rgb(11, 20, 36), rgb(11, 20, 36))');
+    expect(out.selectedLayerIndex).toBe(1);
   });
 
   test('repeating-gradient texture stack drops the image and surfaces a fallback color', () => {
@@ -80,6 +89,7 @@ describe('reduceBackgroundImageLayers', () => {
       changed: true,
       value: 'none',
       fallbackColor: 'rgba(11, 20, 36, 0.04)',
+      selectedLayerIndex: null,
     });
   });
 
@@ -89,6 +99,7 @@ describe('reduceBackgroundImageLayers', () => {
       changed: true,
       value: 'none',
       fallbackColor: 'rgb(26, 42, 71)',
+      selectedLayerIndex: null,
     });
   });
 
@@ -98,7 +109,36 @@ describe('reduceBackgroundImageLayers', () => {
       changed: true,
       value: 'none',
       fallbackColor: '#0b1424',
+      selectedLayerIndex: null,
     });
+  });
+});
+
+// Matching background-* lists are comma-separated like background-image. Picking
+// the surviving layer's image without its size/position/repeat stretches photos
+// (the vendored URL path treats the whole leftover list as objectFit).
+describe('cssCommaListItem', () => {
+  test('picks the matching layer from a multi-value background-size list', () => {
+    expect(cssCommaListItem('cover, 100% 100%', 1)).toBe('100% 100%');
+    expect(cssCommaListItem('cover, 100% 100%', 0)).toBe('cover');
+  });
+
+  test('a single authored value applies to every layer index', () => {
+    expect(cssCommaListItem('cover', 1)).toBe('cover');
+  });
+
+  test('commas inside functions never split a list item', () => {
+    expect(cssCommaListItem('image-set(url("a.png") 1x, url("b.png") 2x), contain', 0)).toBe(
+      'image-set(url("a.png") 1x, url("b.png") 2x)',
+    );
+    expect(cssCommaListItem('image-set(url("a.png") 1x, url("b.png") 2x), contain', 1)).toBe(
+      'contain',
+    );
+  });
+
+  test('out-of-range multi-value lists return null so the caller can skip', () => {
+    expect(cssCommaListItem('cover, contain', 2)).toBeNull();
+    expect(cssCommaListItem('', 0)).toBeNull();
   });
 });
 
@@ -179,8 +219,10 @@ describe('pseudoBorderNeedsMaterialization', () => {
 // pinned through its source (matching the existing background-stabilization
 // tests in scroll-stitch-geometry.test.ts).
 describe('runDomToPptx fidelity wiring', () => {
+  const source = runDomToPptx.toString();
+  const renderSource = readFileSync(new URL('../../src/main/deck-capture.ts', import.meta.url), 'utf8');
+
   test('normalizes background paint and materializes uneven pseudo borders', () => {
-    const source = runDomToPptx.toString();
     expect(source).toContain('normalizeBackgroundPaint(slides');
     expect(source).toContain('materializeUnevenPseudoBorders(slides');
     // Both passes must run AFTER the injected slide background layer exists so
@@ -191,5 +233,358 @@ describe('runDomToPptx fidelity wiring', () => {
     // The neutralizing rule must zero the paint, not just suppress the box —
     // the engine reads a suppressed pseudo's computed border as if it existed.
     expect(source).toContain('content:none!important;border:0!important');
+  });
+
+  test('rewrites the selected layer geometry together with background-image', () => {
+    expect(source).toContain('cssCommaListItem(style.backgroundSize, reduced.selectedLayerIndex)');
+    expect(source).toContain('cssCommaListItem(style.backgroundPosition, reduced.selectedLayerIndex)');
+    expect(source).toContain('cssCommaListItem(style.backgroundRepeat, reduced.selectedLayerIndex)');
+    expect(source).toContain('cssCommaListItem(style.backgroundOrigin, reduced.selectedLayerIndex)');
+    expect(source).toContain('cssCommaListItem(style.backgroundClip, reduced.selectedLayerIndex)');
+    expect(renderSource).toContain(
+      'const cssCommaListItem = ${cssCommaListItem.toString()}',
+    );
+  });
+
+  test('inserts ::before replacements before existing children and appends ::after', () => {
+    expect(source).toContain('element.insertBefore(box, element.firstChild)');
+    expect(source).toContain('element.appendChild(box)');
+    expect(source).toContain('pseudo === "::before"');
+  });
+
+  test('copies non-border pseudo paint onto the replacement before neutralizing the original', () => {
+    expect(source).toContain('["background-image", ps.backgroundImage]');
+    expect(source).toContain('["box-shadow", ps.boxShadow]');
+    expect(source).toContain('["filter", ps.filter]');
+  });
+});
+
+class FakeStyle {
+  private readonly values = new Map<string, { value: string; priority: string }>();
+
+  setProperty(name: string, value: string, priority = ''): void {
+    this.values.set(name, { value, priority });
+  }
+
+  getPropertyValue(name: string): string {
+    return this.values.get(name)?.value ?? '';
+  }
+
+  getPropertyPriority(name: string): string {
+    return this.values.get(name)?.priority ?? '';
+  }
+}
+
+type FakeNode = {
+  attrs: Record<string, string>;
+  childNodes: FakeNode[];
+  children: FakeNode[];
+  firstChild: FakeNode | null;
+  style: FakeStyle;
+  appendChild: (child: FakeNode) => FakeNode;
+  closest: () => null;
+  getAttribute: (name: string) => string | null;
+  insertBefore: (child: FakeNode, ref: FakeNode | null) => FakeNode;
+  prepend: (child: FakeNode) => FakeNode;
+  querySelectorAll: (selector: string) => FakeNode[];
+  setAttribute: (name: string, value: string) => void;
+};
+
+const previousGlobals = {
+  document: globalThis.document,
+  fetch: globalThis.fetch,
+  getComputedStyle: globalThis.getComputedStyle,
+  Node: globalThis.Node,
+  NodeFilter: globalThis.NodeFilter,
+  window: globalThis.window,
+};
+
+afterEach(() => {
+  Object.assign(globalThis, previousGlobals);
+  vi.restoreAllMocks();
+});
+
+function fakeNode(): FakeNode {
+  const node: FakeNode = {
+    attrs: {},
+    childNodes: [],
+    children: [],
+    firstChild: null,
+    style: new FakeStyle(),
+    appendChild(child) {
+      return node.insertBefore(child, null);
+    },
+    closest: () => null,
+    getAttribute(name) {
+      return node.attrs[name] ?? null;
+    },
+    insertBefore(child, ref) {
+      const index = ref ? node.children.indexOf(ref) : -1;
+      if (index >= 0) node.children.splice(index, 0, child);
+      else node.children.push(child);
+      node.childNodes = [...node.children];
+      node.firstChild = node.children[0] ?? null;
+      return child;
+    },
+    prepend(child) {
+      return node.insertBefore(child, node.firstChild);
+    },
+    querySelectorAll(selector) {
+      if (selector === '*') return [...node.children];
+      if (selector === ':scope > [data-od-pptx-bg]') {
+        return node.children.filter((child) => child.getAttribute('data-od-pptx-bg') === 'true');
+      }
+      if (selector === 'h1, h2, h3') return [];
+      return [];
+    },
+    setAttribute(name, value) {
+      node.attrs[name] = value;
+    },
+  };
+  return node;
+}
+
+function installFidelityDom(options: {
+  after?: Record<string, string>;
+  before?: Record<string, string>;
+  slideBackground: Record<string, string>;
+}): { content: FakeNode; host: FakeNode; slide: FakeNode } {
+  const slide = fakeNode();
+  const host = fakeNode();
+  const content = fakeNode();
+  host.appendChild(content);
+  slide.appendChild(host);
+
+  const computed = new Map<FakeNode, Record<string, string>>();
+  computed.set(slide, {
+    backgroundClip: 'border-box',
+    backgroundColor: 'rgb(11, 20, 36)',
+    backgroundImage: 'none',
+    backgroundOrigin: 'padding-box',
+    backgroundPosition: '0% 0%',
+    backgroundRepeat: 'repeat',
+    backgroundSize: 'auto',
+    fontFamily: 'Inter, sans-serif',
+    fontSize: '16px',
+    lineHeight: '24px',
+    overflow: 'hidden',
+    position: 'relative',
+    textAlign: 'left',
+    zIndex: 'auto',
+    ...options.slideBackground,
+  });
+  computed.set(host, {
+    backgroundClip: 'border-box',
+    backgroundColor: 'transparent',
+    backgroundImage: 'none',
+    backgroundOrigin: 'padding-box',
+    backgroundPosition: '0% 0%',
+    backgroundRepeat: 'repeat',
+    backgroundSize: 'auto',
+    fontFamily: 'Inter, sans-serif',
+    fontSize: '16px',
+    lineHeight: '24px',
+    overflow: 'visible',
+    position: 'relative',
+    textAlign: 'left',
+    zIndex: 'auto',
+  });
+  computed.set(content, { ...computed.get(host)! });
+
+  const body = fakeNode();
+  const documentElement = fakeNode();
+  const fakeDocument = {
+    baseURI: 'https://example.test/decks/signal/index.html',
+    body,
+    createElement: () => fakeNode(),
+    createTreeWalker: () => ({ nextNode: () => null }),
+    documentElement,
+    fonts: undefined,
+    head: {
+      appendChild: (node: FakeNode) => node,
+    },
+    querySelectorAll: (selector: string) => {
+      if (selector === '.slide') return [slide];
+      if (selector === 'style') return [];
+      if (selector === '*') return [slide, host, content];
+      return [];
+    },
+  };
+
+  Object.assign(globalThis, {
+    document: fakeDocument as unknown as Document,
+    fetch: vi.fn(async () => new Response('')),
+    getComputedStyle: ((el: FakeNode, pseudo?: string) => {
+      if (pseudo === '::before') {
+        return {
+          backgroundColor: 'transparent',
+          backgroundImage: 'none',
+          backgroundPosition: '0% 0%',
+          backgroundRepeat: 'repeat',
+          backgroundSize: 'auto',
+          borderBottomColor: 'rgb(212, 175, 55)',
+          borderBottomStyle: 'solid',
+          borderBottomWidth: '0px',
+          borderLeftColor: 'rgb(212, 175, 55)',
+          borderLeftStyle: 'solid',
+          borderLeftWidth: '0px',
+          borderRadius: '0px',
+          borderRightColor: 'rgb(212, 175, 55)',
+          borderRightStyle: 'solid',
+          borderRightWidth: '0px',
+          borderTopColor: 'rgb(212, 175, 55)',
+          borderTopStyle: 'solid',
+          borderTopWidth: '0px',
+          boxShadow: 'none',
+          boxSizing: 'border-box',
+          content: 'none',
+          display: 'block',
+          filter: 'none',
+          height: '24px',
+          left: '0px',
+          margin: '0px',
+          opacity: '1',
+          pointerEvents: 'none',
+          position: 'absolute',
+          top: '0px',
+          transform: 'none',
+          transformOrigin: 'center',
+          width: '24px',
+          zIndex: 'auto',
+          ...(el === host ? options.before : undefined),
+        };
+      }
+      if (pseudo === '::after') {
+        return {
+          backgroundColor: 'transparent',
+          backgroundImage: 'none',
+          backgroundPosition: '0% 0%',
+          backgroundRepeat: 'repeat',
+          backgroundSize: 'auto',
+          borderBottomColor: 'rgb(212, 175, 55)',
+          borderBottomStyle: 'solid',
+          borderBottomWidth: '0px',
+          borderLeftColor: 'rgb(212, 175, 55)',
+          borderLeftStyle: 'solid',
+          borderLeftWidth: '0px',
+          borderRadius: '0px',
+          borderRightColor: 'rgb(212, 175, 55)',
+          borderRightStyle: 'solid',
+          borderRightWidth: '0px',
+          borderTopColor: 'rgb(212, 175, 55)',
+          borderTopStyle: 'solid',
+          borderTopWidth: '0px',
+          boxShadow: 'none',
+          boxSizing: 'border-box',
+          content: 'none',
+          display: 'block',
+          filter: 'none',
+          height: '16px',
+          left: 'auto',
+          margin: '0px',
+          opacity: '1',
+          pointerEvents: 'none',
+          position: 'absolute',
+          top: 'auto',
+          transform: 'none',
+          transformOrigin: 'center',
+          width: '16px',
+          zIndex: 'auto',
+          ...(el === host ? options.after : undefined),
+        };
+      }
+      return (
+        computed.get(el) ?? {
+          backgroundClip: 'border-box',
+          backgroundColor: 'transparent',
+          backgroundImage: 'none',
+          backgroundOrigin: 'padding-box',
+          backgroundPosition: '0% 0%',
+          backgroundRepeat: 'repeat',
+          backgroundSize: 'auto',
+          fontFamily: 'Inter, sans-serif',
+          fontSize: '16px',
+          lineHeight: '24px',
+          overflow: 'visible',
+          position: 'relative',
+          textAlign: 'left',
+          zIndex: 'auto',
+        }
+      );
+    }) as unknown as typeof getComputedStyle,
+    Node: class FakeDomNode {
+      static readonly TEXT_NODE = 3;
+    },
+    NodeFilter: class FakeNodeFilter {
+      static readonly SHOW_TEXT = 4;
+    },
+    window: {
+      domToPptx: {
+        exportToPptx: async () => new Blob(['pptx']),
+      },
+    },
+  });
+
+  return { content, host, slide };
+}
+
+describe('runDomToPptx fidelity integration', () => {
+  test('keeps the selected photo layer size instead of the leftover comma list', async () => {
+    const { slide } = installFidelityDom({
+      slideBackground: {
+        backgroundImage:
+          'linear-gradient(rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0.5)), url("https://example.com/hero.jpg")',
+        backgroundPosition: '0% 0%, 80% 20%',
+        backgroundRepeat: 'no-repeat, no-repeat',
+        backgroundSize: 'cover, 100% 100%',
+      },
+    });
+
+    const result = await runDomToPptx('.slide');
+
+    expect(result.error).toBeUndefined();
+    expect(slide.style.getPropertyValue('background-image')).toBe('url("https://example.com/hero.jpg")');
+    expect(slide.style.getPropertyValue('background-size')).toBe('100% 100%');
+    expect(slide.style.getPropertyValue('background-position')).toBe('80% 20%');
+  });
+
+  test('inserts a ::before bracket ahead of content and an ::after arrow after it', async () => {
+    const { content, host } = installFidelityDom({
+      slideBackground: { backgroundColor: 'rgb(11, 20, 36)' },
+      before: {
+        content: '""',
+        borderTopWidth: '2px',
+        borderLeftWidth: '2px',
+        boxShadow: '0 0 12px rgb(212, 175, 55)',
+        backgroundImage: 'linear-gradient(rgb(212, 175, 55), rgb(184, 148, 31))',
+        filter: 'drop-shadow(0 2px 4px rgba(0, 0, 0, 0.4))',
+      },
+      after: {
+        content: '""',
+        borderRightWidth: '3px',
+        borderBottomWidth: '3px',
+        left: 'auto',
+        top: 'auto',
+      },
+    });
+
+    const result = await runDomToPptx('.slide');
+    const replacementBefore = host.children.find(
+      (child) => child.getAttribute('data-od-pptx-pseudo-box') === 'true' && child !== content,
+    );
+    const boxes = host.children.filter((child) => child.getAttribute('data-od-pptx-pseudo-box') === 'true');
+
+    expect(result.error).toBeUndefined();
+    expect(boxes).toHaveLength(2);
+    expect(host.children[0]).toBe(boxes[0]);
+    expect(host.children[host.children.length - 1]).toBe(boxes[1]);
+    expect(host.children.includes(content)).toBe(true);
+    expect(replacementBefore?.style.getPropertyValue('box-shadow')).toBe('0 0 12px rgb(212, 175, 55)');
+    expect(replacementBefore?.style.getPropertyValue('background-image')).toBe(
+      'linear-gradient(rgb(212, 175, 55), rgb(184, 148, 31))',
+    );
+    expect(replacementBefore?.style.getPropertyValue('filter')).toBe(
+      'drop-shadow(0 2px 4px rgba(0, 0, 0, 0.4))',
+    );
   });
 });
