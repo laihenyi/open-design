@@ -404,10 +404,11 @@ async function renderEditablePptx(
   );
   await nextFrames(window);
   await window.webContents.executeJavaScript(await loadDomToPptxBundle(), true);
-  // runDomToPptx calls cjkPromotedFontFamily by name; define it in the same scope
-  // as the serialized body so the reference resolves inside the render window.
+  // runDomToPptx calls these module-scope helpers by name; define them in the
+  // same scope as the serialized body so the references resolve inside the
+  // render window.
   const out = (await window.webContents.executeJavaScript(
-    `(() => { const cjkPromotedFontFamily = ${cjkPromotedFontFamily.toString()}; return (${runDomToPptx.toString()})(${JSON.stringify(SLIDE_SELECTOR)}); })()`,
+    `(() => { const cjkPromotedFontFamily = ${cjkPromotedFontFamily.toString()}; const reduceBackgroundImageLayers = ${reduceBackgroundImageLayers.toString()}; const pseudoBorderNeedsMaterialization = ${pseudoBorderNeedsMaterialization.toString()}; return (${runDomToPptx.toString()})(${JSON.stringify(SLIDE_SELECTOR)}); })()`,
     true,
   )) as { b64?: string; error?: string };
   if (!out || out.error || !out.b64) {
@@ -1002,6 +1003,92 @@ export function cjkPromotedFontFamily(fontFamily: string, text: string): string 
   return [families[firstCjk], ...families.filter((_, i) => i !== firstCjk)].join(", ");
 }
 
+// dom-to-pptx claims gradient support but reads `background-image` with the
+// greedy regex `/linear-gradient\((.*)\)/` and a bare `includes('linear-gradient')`
+// guard, so ANY multi-layer background — the common
+// `radial-gradient(...), linear-gradient(...)` stack, a scrim gradient over a
+// `url(...)` photo, or `repeating-linear-gradient` textures (which also match the
+// `includes` check) — is parsed across layer boundaries into one corrupt gradient
+// SVG. Reduce the computed value to the single bottom-most layer the engine can
+// faithfully render (a plain `linear-gradient(...)` or `url(...)`); when no layer
+// qualifies, drop the image and surface the first color found in the stack so the
+// caller can keep an equivalent solid fill. Kept pure and self-contained so it can
+// be both unit-tested and serialized into the export render window.
+export function reduceBackgroundImageLayers(backgroundImage: string): {
+  changed: boolean;
+  value: string;
+  fallbackColor: string | null;
+} {
+  const input = (backgroundImage || "").trim();
+  if (!input || input === "none") return { changed: false, value: "none", fallbackColor: null };
+  // Split into top-level layers; commas inside url()/gradient() color stops don't count.
+  const layers: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i];
+    if (ch === "(") depth += 1;
+    else if (ch === ")") depth = Math.max(0, depth - 1);
+    else if (ch === "," && depth === 0) {
+      layers.push(input.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  layers.push(input.slice(start).trim());
+  // Plain linear-gradient (NOT repeating-) and url() are the only layer kinds the
+  // engine converts faithfully — and only when they stand alone.
+  const supported = (layer: string) => /^(?:linear-gradient|url)\(/i.test(layer);
+  if (layers.length === 1 && supported(layers[0])) {
+    return { changed: false, value: input, fallbackColor: null };
+  }
+  // CSS lists layers top-first, so the LAST supported layer is the visual base
+  // (e.g. a dark scrim over `url(photo)` keeps the photo, not the scrim).
+  for (let i = layers.length - 1; i >= 0; i--) {
+    if (supported(layers[i])) return { changed: true, value: layers[i], fallbackColor: null };
+  }
+  const rgb = input.match(/rgba?\([^)]*\)/i);
+  const hex = input.match(/#[0-9a-f]{3,8}\b/i);
+  return { changed: true, value: "none", fallbackColor: rgb ? rgb[0] : hex ? hex[0] : null };
+}
+
+export interface PseudoBorderSnapshot {
+  content: string;
+  display: string;
+  borderTopWidth: string;
+  borderRightWidth: string;
+  borderBottomWidth: string;
+  borderLeftWidth: string;
+}
+
+// dom-to-pptx renders a contentless ::before/::after as ONE rect shape whose
+// `line` outlines all four sides, so partial-border decorations — corner
+// brackets (border-top + border-left only), arrow heads (two rotated borders),
+// underline accents — come back from the editable export as full boxes drawn
+// around the pseudo's bounds. Returns true when the pseudo generates a
+// decorative box (empty string content) whose border sides are uneven, i.e.
+// exactly the shape the engine will get wrong. Kept pure and self-contained so
+// it can be both unit-tested and serialized into the export render window.
+export function pseudoBorderNeedsMaterialization(style: PseudoBorderSnapshot): boolean {
+  if (style.display === "none") return false;
+  const content = (style.content || "").trim();
+  // 'none'/'normal' → no pseudo box; quoted text → engine's text path handles it.
+  if (content !== '""' && content !== "''") return false;
+  const widths = [
+    style.borderTopWidth,
+    style.borderRightWidth,
+    style.borderBottomWidth,
+    style.borderLeftWidth,
+  ].map((w) => {
+    const n = Number.parseFloat(w);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  });
+  const visible = widths.filter((w) => w > 0);
+  if (visible.length === 0) return false;
+  // A uniform four-side border is the one case the engine's full outline is right.
+  if (visible.length === 4 && visible.every((w) => w === visible[0])) return false;
+  return true;
+}
+
 // Serialized into the page: runs the injected dom-to-pptx engine over every real
 // slide and returns the .pptx bytes as base64 (or an error). Fonts are
 // auto-detected + embedded; SVGs stay vector (editable in PowerPoint).
@@ -1159,6 +1246,119 @@ export async function runDomToPptx(slideSelector: string): Promise<{ b64?: strin
     }
   }
 
+  // Reduce every element's background-image to the single layer dom-to-pptx can
+  // faithfully convert BEFORE the engine reads it (see reduceBackgroundImageLayers
+  // for the why). Runs after ensureExplicitSlideBackgrounds so the injected
+  // [data-od-pptx-bg] layer — which copies the slide's original multi-layer
+  // stack — is normalized too.
+  function normalizeBackgroundPaint(slides: HTMLElement[]): void {
+    for (const slide of slides) {
+      const all: Element[] = [slide, ...Array.from(slide.querySelectorAll("*"))];
+      for (const el of all) {
+        const element = el as HTMLElement;
+        if (!element.style) continue;
+        const style = getComputedStyle(element);
+        // Gradient text (background-clip: text) rides a dedicated engine path;
+        // leave it alone.
+        const clip =
+          (style as CSSStyleDeclaration & { webkitBackgroundClip?: string }).webkitBackgroundClip ||
+          style.backgroundClip;
+        if (clip === "text") continue;
+        const reduced = reduceBackgroundImageLayers(style.backgroundImage);
+        if (!reduced.changed) continue;
+        element.style.setProperty("background-image", reduced.value, "important");
+        if (
+          reduced.value === "none" &&
+          reduced.fallbackColor &&
+          isTransparentColor(style.backgroundColor)
+        ) {
+          element.style.setProperty("background-color", reduced.fallbackColor, "important");
+        }
+      }
+    }
+  }
+
+  // Replace partial-border ::before/::after decorations (corner brackets, arrow
+  // heads) with real elements BEFORE the engine walks the DOM: dom-to-pptx draws
+  // a contentless pseudo as one rect outlined on ALL four sides, while a real
+  // element goes through its per-side composite-border path and renders each
+  // border as its own line. The original pseudo is neutralized via an injected
+  // rule (the engine reads a suppressed pseudo's computed border/background as
+  // if it still existed, so the paint must be zeroed, not just `content: none`).
+  function materializeUnevenPseudoBorders(slides: HTMLElement[]): void {
+    const rules: string[] = [];
+    let seq = 0;
+    for (const slide of slides) {
+      const all: Element[] = [slide, ...Array.from(slide.querySelectorAll("*"))];
+      for (const el of all) {
+        const element = el as HTMLElement;
+        if (!element.style || element.getAttribute("data-od-pptx-pseudo-box") === "true") continue;
+        for (const pseudo of ["::before", "::after"] as const) {
+          const ps = getComputedStyle(element, pseudo);
+          if (
+            !pseudoBorderNeedsMaterialization({
+              content: ps.content,
+              display: ps.display,
+              borderTopWidth: ps.borderTopWidth,
+              borderRightWidth: ps.borderRightWidth,
+              borderBottomWidth: ps.borderBottomWidth,
+              borderLeftWidth: ps.borderLeftWidth,
+            })
+          ) {
+            continue;
+          }
+          seq += 1;
+          const attr = pseudo === "::before" ? "data-od-pptx-pseudo-before" : "data-od-pptx-pseudo-after";
+          element.setAttribute(attr, String(seq));
+          rules.push(
+            `[${attr}="${seq}"]${pseudo}{content:none!important;border:0!important;` +
+              `background:transparent!important;box-shadow:none!important;}`,
+          );
+          // Only an absolutely-positioned pseudo can be replicated without
+          // disturbing flow layout; its replacement resolves against the same
+          // containing block because it shares the pseudo's parent. Statically
+          // positioned decorations stay suppressed (a missing flourish beats a
+          // wrong full box).
+          if (ps.position !== "absolute" && ps.position !== "fixed") continue;
+          const box = document.createElement("div");
+          box.setAttribute("data-od-pptx-pseudo-box", "true");
+          box.setAttribute("aria-hidden", "true");
+          const copy: Array<[string, string]> = [
+            ["display", "block"],
+            ["position", ps.position],
+            ["left", ps.left],
+            ["top", ps.top],
+            ["width", ps.width],
+            ["height", ps.height],
+            ["margin", ps.margin],
+            ["box-sizing", ps.boxSizing],
+            ["border-top", `${ps.borderTopWidth} ${ps.borderTopStyle} ${ps.borderTopColor}`],
+            ["border-right", `${ps.borderRightWidth} ${ps.borderRightStyle} ${ps.borderRightColor}`],
+            ["border-bottom", `${ps.borderBottomWidth} ${ps.borderBottomStyle} ${ps.borderBottomColor}`],
+            ["border-left", `${ps.borderLeftWidth} ${ps.borderLeftStyle} ${ps.borderLeftColor}`],
+            ["border-radius", ps.borderRadius],
+            ["background-color", ps.backgroundColor],
+            ["transform", ps.transform],
+            ["transform-origin", ps.transformOrigin],
+            ["opacity", ps.opacity],
+            ["z-index", ps.zIndex],
+            ["pointer-events", "none"],
+          ];
+          for (const [prop, value] of copy) {
+            if (value && value !== "auto") box.style.setProperty(prop, value, "important");
+          }
+          element.appendChild(box);
+        }
+      }
+    }
+    if (rules.length > 0) {
+      const sheet = document.createElement("style");
+      sheet.setAttribute("data-od-pptx-pseudo-rules", "true");
+      sheet.textContent = rules.join("\n");
+      (document.head || document.documentElement).appendChild(sheet);
+    }
+  }
+
   try {
     const w = window as unknown as {
       domToPptx?: { exportToPptx: (target: unknown, options: unknown) => Promise<Blob> };
@@ -1171,6 +1371,8 @@ export async function runDomToPptx(slideSelector: string): Promise<{ b64?: strin
       .filter((el) => !(el as HTMLElement).closest(".mini-slide, .overview, .notes-overlay, .thumb"));
     if (slides.length === 0) return { error: "no slides to export" };
     ensureExplicitSlideBackgrounds(slides as HTMLElement[]);
+    normalizeBackgroundPaint(slides as HTMLElement[]);
+    materializeUnevenPseudoBorders(slides as HTMLElement[]);
     stabilizeLargeSingleLineText(slides as HTMLElement[]);
     promoteCjkTypefaces(slides as HTMLElement[]);
     // dom-to-pptx assumes `node.className` is a string, but SVG elements expose
