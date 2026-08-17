@@ -112,6 +112,27 @@ describe('reduceBackgroundImageLayers', () => {
       selectedLayerIndex: null,
     });
   });
+
+  test('oklch radial-gradient falls back to the first color stop, not null', () => {
+    const input = 'radial-gradient(circle, oklch(0.28 0.04 250), oklch(0.18 0.03 250))';
+    expect(reduceBackgroundImageLayers(input)).toEqual({
+      changed: true,
+      value: 'none',
+      fallbackColor: 'oklch(0.28 0.04 250)',
+      selectedLayerIndex: null,
+    });
+  });
+
+  test('display-p3 color() stops are kept as fallback and direction tokens are skipped', () => {
+    const input =
+      'conic-gradient(from 90deg, color(display-p3 0.2 0.15 0.4), color(display-p3 0.1 0.08 0.2))';
+    expect(reduceBackgroundImageLayers(input)).toEqual({
+      changed: true,
+      value: 'none',
+      fallbackColor: 'color(display-p3 0.2 0.15 0.4)',
+      selectedLayerIndex: null,
+    });
+  });
 });
 
 // Matching background-* lists are comma-separated like background-image. Picking
@@ -252,6 +273,10 @@ describe('runDomToPptx fidelity wiring', () => {
     expect(renderSource).toContain(
       'const cssCommaListItem = ${cssCommaListItem.toString()}',
     );
+    expect(renderSource).toContain(
+      'const firstCssColorStop = ${firstCssColorStop.toString()}',
+    );
+    expect(source).toContain('firstCssColorStop(input)');
   });
 
   test('inserts ::before replacements before existing children and appends ::after', () => {
@@ -267,6 +292,8 @@ describe('runDomToPptx fidelity wiring', () => {
     expect(source).toContain('["right", ps.right]');
     expect(source).toContain('["bottom", ps.bottom]');
     expect(source).toContain('["visibility", ps.visibility]');
+    expect(source).toContain('["background-origin", ps.backgroundOrigin]');
+    expect(source).toContain('["background-clip", ps.backgroundClip]');
   });
 });
 
@@ -447,8 +474,10 @@ function installFidelityDom(options: {
     getComputedStyle: ((el: FakeNode, pseudo?: string) => {
       if (pseudo === '::before') {
         return {
+          backgroundClip: 'padding-box',
           backgroundColor: 'transparent',
           backgroundImage: 'none',
+          backgroundOrigin: 'padding-box',
           backgroundPosition: '0% 0%',
           backgroundRepeat: 'repeat',
           backgroundSize: 'auto',
@@ -489,8 +518,10 @@ function installFidelityDom(options: {
       }
       if (pseudo === '::after') {
         return {
+          backgroundClip: 'padding-box',
           backgroundColor: 'transparent',
           backgroundImage: 'none',
+          backgroundOrigin: 'padding-box',
           backgroundPosition: '0% 0%',
           backgroundRepeat: 'repeat',
           backgroundSize: 'auto',
@@ -703,5 +734,26 @@ describe('runDomToPptx fidelity integration', () => {
     expect(result.error).toBeUndefined();
     expect(slide.style.getPropertyValue('background-image')).toBe('url("https://example.com/hero.jpg")');
     expect(slide.style.getPropertyValue('background-size')).toBe('cover');
+  });
+
+  test('copies non-default background-origin and background-clip onto the replacement', async () => {
+    const { host } = installFidelityDom({
+      slideBackground: { backgroundColor: 'rgb(11, 20, 36)' },
+      before: {
+        content: '""',
+        borderTopWidth: '2px',
+        borderLeftWidth: '2px',
+        backgroundImage: 'url("https://example.com/bracket.png")',
+        backgroundOrigin: 'border-box',
+        backgroundClip: 'border-box',
+      },
+    });
+
+    const result = await runDomToPptx('.slide');
+    const box = host.children.find((child) => child.getAttribute('data-od-pptx-pseudo-box') === 'true');
+
+    expect(result.error).toBeUndefined();
+    expect(box?.style.getPropertyValue('background-origin')).toBe('border-box');
+    expect(box?.style.getPropertyValue('background-clip')).toBe('border-box');
   });
 });

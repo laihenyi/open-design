@@ -454,11 +454,11 @@ async function renderEditablePptx(
   )) as string[];
   const importedStylesheetOverrides = await fetchGoogleFontStylesheets(importedStylesheetUrls);
   await window.webContents.executeJavaScript(await loadDomToPptxBundle(), true);
-  // runDomToPptx calls these module-scope helpers by name; define them in the
-  // same scope as the serialized body so the references resolve inside the
-  // render window.
+  // runDomToPptx (and reduceBackgroundImageLayers) call these module-scope
+  // helpers by name; define them in the same scope as the serialized body so
+  // the references resolve inside the render window.
   const out = (await window.webContents.executeJavaScript(
-    `(() => { const cjkPromotedFontFamily = ${cjkPromotedFontFamily.toString()}; const reduceBackgroundImageLayers = ${reduceBackgroundImageLayers.toString()}; const cssCommaListItem = ${cssCommaListItem.toString()}; const pseudoBorderNeedsMaterialization = ${pseudoBorderNeedsMaterialization.toString()}; return (${runDomToPptx.toString()})(${JSON.stringify(SLIDE_SELECTOR)}, ${JSON.stringify(importedStylesheetOverrides)}); })()`,
+    `(() => { const cjkPromotedFontFamily = ${cjkPromotedFontFamily.toString()}; const firstCssColorStop = ${firstCssColorStop.toString()}; const reduceBackgroundImageLayers = ${reduceBackgroundImageLayers.toString()}; const cssCommaListItem = ${cssCommaListItem.toString()}; const pseudoBorderNeedsMaterialization = ${pseudoBorderNeedsMaterialization.toString()}; return (${runDomToPptx.toString()})(${JSON.stringify(SLIDE_SELECTOR)}, ${JSON.stringify(importedStylesheetOverrides)}); })()`,
     true,
   )) as { b64?: string; error?: string };
   if (!out || out.error || !out.b64) {
@@ -1097,6 +1097,49 @@ export function cssCommaListItem(list: string, index: number): string | null {
   return filtered[index % filtered.length] ?? null;
 }
 
+// First color stop in a CSS image/gradient value, including Color 4 functions
+// (`oklch()`, `color(display-p3 …)`). Direction/angle tokens are skipped so
+// `radial-gradient(circle, oklch(...), …)` still yields a usable fallback fill
+// when the engine cannot keep the gradient. Kept self-contained so it can be
+// unit-tested and serialized into the export render window.
+export function firstCssColorStop(input: string): string | null {
+  const colorFn = /^(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)$/i;
+  const ident = /^-?[a-z_][\w-]*/i;
+  const hex = /^#[0-9a-f]{3,8}\b/i;
+
+  let i = 0;
+  while (i < input.length) {
+    const rest = input.slice(i);
+    const hexMatch = rest.match(hex);
+    if (hexMatch) return hexMatch[0];
+    const identMatch = rest.match(ident);
+    if (identMatch) {
+      const name = identMatch[0];
+      const afterName = i + name.length;
+      if (input[afterName] === "(") {
+        if (colorFn.test(name)) {
+          let depth = 0;
+          for (let k = afterName; k < input.length; k++) {
+            if (input[k] === "(") depth += 1;
+            else if (input[k] === ")") {
+              depth -= 1;
+              if (depth === 0) return input.slice(i, k + 1);
+            }
+          }
+          return null;
+        }
+        // Gradient/url/image-set wrappers: scan their arguments, don't skip them.
+        i = afterName;
+        continue;
+      }
+      i = afterName;
+      continue;
+    }
+    i += 1;
+  }
+  return null;
+}
+
 // dom-to-pptx claims gradient support but reads `background-image` with the
 // greedy regex `/linear-gradient\((.*)\)/` and a bare `includes('linear-gradient')`
 // guard, so ANY multi-layer background — the common
@@ -1105,8 +1148,9 @@ export function cssCommaListItem(list: string, index: number): string | null {
 // `includes` check) — is parsed across layer boundaries into one corrupt gradient
 // SVG. Reduce the computed value to the single bottom-most layer the engine can
 // faithfully render (a plain `linear-gradient(...)` or `url(...)`); when no layer
-// qualifies, drop the image and surface the first color found in the stack so the
-// caller can keep an equivalent solid fill. selectedLayerIndex lets the caller
+// qualifies, drop the image and surface the first CSS color stop (including
+// Color 4 functions) so the caller can keep an equivalent solid fill.
+// selectedLayerIndex lets the caller
 // rewrite the matching background-size/position/repeat/origin/clip list item so
 // a leftover comma list is not passed to the engine as objectFit. Kept pure and
 // self-contained so it can be both unit-tested and serialized into the export
@@ -1148,12 +1192,10 @@ export function reduceBackgroundImageLayers(backgroundImage: string): {
       return { changed: true, value: layers[i], fallbackColor: null, selectedLayerIndex: i };
     }
   }
-  const rgb = input.match(/rgba?\([^)]*\)/i);
-  const hex = input.match(/#[0-9a-f]{3,8}\b/i);
   return {
     changed: true,
     value: "none",
-    fallbackColor: rgb ? rgb[0] : hex ? hex[0] : null,
+    fallbackColor: firstCssColorStop(input),
     selectedLayerIndex: null,
   };
 }
@@ -1329,10 +1371,7 @@ export async function runDomToPptx(
   }
 
   function firstCssColor(input: string): string | null {
-    const rgb = input.match(/rgba?\([^)]*\)/i);
-    if (rgb) return rgb[0];
-    const hex = input.match(/#[0-9a-f]{3,8}\b/i);
-    return hex ? hex[0] : null;
+    return firstCssColorStop(input);
   }
 
   function effectiveBackgroundStyle(slide: HTMLElement): {
@@ -1604,6 +1643,8 @@ export async function runDomToPptx(
             ["background-size", ps.backgroundSize],
             ["background-position", ps.backgroundPosition],
             ["background-repeat", ps.backgroundRepeat],
+            ["background-origin", ps.backgroundOrigin],
+            ["background-clip", ps.backgroundClip],
             ["box-shadow", ps.boxShadow],
             ["filter", ps.filter],
             ["transform", ps.transform],
