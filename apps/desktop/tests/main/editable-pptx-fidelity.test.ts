@@ -136,8 +136,10 @@ describe('cssCommaListItem', () => {
     );
   });
 
-  test('out-of-range multi-value lists return null so the caller can skip', () => {
-    expect(cssCommaListItem('cover, contain', 2)).toBeNull();
+  test('out-of-range multi-value lists cycle so a leftover comma list never survives', () => {
+    // Three image layers with two sizes: CSS list cycling maps index 2 back to `cover`.
+    expect(cssCommaListItem('cover, contain', 2)).toBe('cover');
+    expect(cssCommaListItem('cover, contain', 3)).toBe('contain');
     expect(cssCommaListItem('', 0)).toBeNull();
   });
 });
@@ -230,6 +232,12 @@ describe('runDomToPptx fidelity wiring', () => {
     expect(source.indexOf('ensureExplicitSlideBackgrounds(slides')).toBeLessThan(
       source.indexOf('normalizeBackgroundPaint(slides'),
     );
+    // Replacements are created first so normalizeBackgroundPaint also reduces
+    // layered paint copied onto the new boxes. Match the call sites (lastIndexOf),
+    // not the nested function declarations.
+    expect(source.lastIndexOf('materializeUnevenPseudoBorders(slides')).toBeLessThan(
+      source.lastIndexOf('normalizeBackgroundPaint(slides'),
+    );
     // The neutralizing rule must zero the paint, not just suppress the box —
     // the engine reads a suppressed pseudo's computed border as if it existed.
     expect(source).toContain('content:none!important;border:0!important');
@@ -256,6 +264,9 @@ describe('runDomToPptx fidelity wiring', () => {
     expect(source).toContain('["background-image", ps.backgroundImage]');
     expect(source).toContain('["box-shadow", ps.boxShadow]');
     expect(source).toContain('["filter", ps.filter]');
+    expect(source).toContain('["right", ps.right]');
+    expect(source).toContain('["bottom", ps.bottom]');
+    expect(source).toContain('["visibility", ps.visibility]');
   });
 });
 
@@ -272,6 +283,15 @@ class FakeStyle {
 
   getPropertyPriority(name: string): string {
     return this.values.get(name)?.priority ?? '';
+  }
+
+  toCamelRecord(): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const [name, { value }] of this.values) {
+      const camel = name.replace(/-([a-z])/g, (_, ch: string) => ch.toUpperCase());
+      out[camel] = value;
+    }
+    return out;
   }
 }
 
@@ -330,7 +350,17 @@ function fakeNode(): FakeNode {
       return node.insertBefore(child, node.firstChild);
     },
     querySelectorAll(selector) {
-      if (selector === '*') return [...node.children];
+      if (selector === '*') {
+        const all: FakeNode[] = [];
+        const walk = (current: FakeNode) => {
+          for (const child of current.children) {
+            all.push(child);
+            walk(child);
+          }
+        };
+        walk(node);
+        return all;
+      }
       if (selector === ':scope > [data-od-pptx-bg]') {
         return node.children.filter((child) => child.getAttribute('data-od-pptx-bg') === 'true');
       }
@@ -446,9 +476,12 @@ function installFidelityDom(options: {
           opacity: '1',
           pointerEvents: 'none',
           position: 'absolute',
+          right: 'auto',
+          bottom: 'auto',
           top: '0px',
           transform: 'none',
           transformOrigin: 'center',
+          visibility: 'visible',
           width: '24px',
           zIndex: 'auto',
           ...(el === host ? options.before : undefined),
@@ -485,15 +518,18 @@ function installFidelityDom(options: {
           opacity: '1',
           pointerEvents: 'none',
           position: 'absolute',
+          right: 'auto',
+          bottom: 'auto',
           top: 'auto',
           transform: 'none',
           transformOrigin: 'center',
+          visibility: 'visible',
           width: '16px',
           zIndex: 'auto',
           ...(el === host ? options.after : undefined),
         };
       }
-      return (
+      const base =
         computed.get(el) ?? {
           backgroundClip: 'border-box',
           backgroundColor: 'transparent',
@@ -509,8 +545,8 @@ function installFidelityDom(options: {
           position: 'relative',
           textAlign: 'left',
           zIndex: 'auto',
-        }
-      );
+        };
+      return { ...base, ...el.style.toCamelRecord() };
     }) as unknown as typeof getComputedStyle,
     Node: class FakeDomNode {
       static readonly TEXT_NODE = 3;
@@ -586,5 +622,86 @@ describe('runDomToPptx fidelity integration', () => {
     expect(replacementBefore?.style.getPropertyValue('filter')).toBe(
       'drop-shadow(0 2px 4px rgba(0, 0, 0, 0.4))',
     );
+  });
+
+  test('keeps a bottom-right arrow on right/bottom instead of dropping auto left/top', async () => {
+    const { host } = installFidelityDom({
+      slideBackground: { backgroundColor: 'rgb(11, 20, 36)' },
+      after: {
+        content: '""',
+        borderRightWidth: '3px',
+        borderBottomWidth: '3px',
+        left: 'auto',
+        top: 'auto',
+        right: '0px',
+        bottom: '0px',
+      },
+    });
+
+    const result = await runDomToPptx('.slide');
+    const arrow = host.children.find((child) => child.getAttribute('data-od-pptx-pseudo-box') === 'true');
+
+    expect(result.error).toBeUndefined();
+    expect(arrow?.style.getPropertyValue('right')).toBe('0px');
+    expect(arrow?.style.getPropertyValue('bottom')).toBe('0px');
+    expect(arrow?.style.getPropertyValue('left')).toBe('');
+    expect(arrow?.style.getPropertyValue('top')).toBe('');
+  });
+
+  test('does not materialize a visibility:hidden pseudo into a visible box', async () => {
+    const { host } = installFidelityDom({
+      slideBackground: { backgroundColor: 'rgb(11, 20, 36)' },
+      before: {
+        content: '""',
+        borderTopWidth: '2px',
+        borderLeftWidth: '2px',
+        visibility: 'hidden',
+      },
+    });
+
+    const result = await runDomToPptx('.slide');
+    const boxes = host.children.filter((child) => child.getAttribute('data-od-pptx-pseudo-box') === 'true');
+
+    expect(result.error).toBeUndefined();
+    expect(boxes).toHaveLength(0);
+  });
+
+  test('reduces layered paint copied onto a materialized pseudo', async () => {
+    const { host } = installFidelityDom({
+      slideBackground: { backgroundColor: 'rgb(11, 20, 36)' },
+      before: {
+        content: '""',
+        borderTopWidth: '2px',
+        borderLeftWidth: '2px',
+        backgroundImage:
+          'linear-gradient(rgba(0, 0, 0, 0.4), rgba(0, 0, 0, 0.4)), url("https://example.com/bracket.png")',
+        backgroundSize: 'cover, 100% 100%',
+      },
+    });
+
+    const result = await runDomToPptx('.slide');
+    const box = host.children.find((child) => child.getAttribute('data-od-pptx-pseudo-box') === 'true');
+
+    expect(result.error).toBeUndefined();
+    expect(box?.style.getPropertyValue('background-image')).toBe('url("https://example.com/bracket.png")');
+    expect(box?.style.getPropertyValue('background-size')).toBe('100% 100%');
+  });
+
+  test('cycles a short background-size list when the surviving layer is past the last authored size', async () => {
+    const { slide } = installFidelityDom({
+      slideBackground: {
+        backgroundImage:
+          'radial-gradient(circle, rgb(0, 0, 0), transparent), ' +
+          'linear-gradient(rgb(11, 20, 36), rgb(11, 20, 36)), ' +
+          'url("https://example.com/hero.jpg")',
+        backgroundSize: 'cover, contain',
+      },
+    });
+
+    const result = await runDomToPptx('.slide');
+
+    expect(result.error).toBeUndefined();
+    expect(slide.style.getPropertyValue('background-image')).toBe('url("https://example.com/hero.jpg")');
+    expect(slide.style.getPropertyValue('background-size')).toBe('cover');
   });
 });

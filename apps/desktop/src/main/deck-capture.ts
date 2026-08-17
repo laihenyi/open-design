@@ -1072,7 +1072,9 @@ export function cjkPromotedFontFamily(fontFamily: string, text: string): string 
 
 // Split a comma-separated CSS list (background-size/position/repeat/…) the same
 // way background-image layers are split: commas inside url()/gradient()/image-set()
-// do not count. Kept pure and self-contained so it can be unit-tested and
+// do not count. When the list is shorter than the selected layer index, values
+// cycle (`index % length`) so a leftover comma list is never left on the surviving
+// image as objectFit. Kept pure and self-contained so it can be unit-tested and
 // serialized into the export render window beside reduceBackgroundImageLayers.
 export function cssCommaListItem(list: string, index: number): string | null {
   const input = (list || "").trim();
@@ -1090,11 +1092,9 @@ export function cssCommaListItem(list: string, index: number): string | null {
     }
   }
   items.push(input.slice(start).trim());
-  if (index < items.length) return items[index] || null;
-  // A single authored value is the usual form for every layer when the computed
-  // list has not been expanded to match background-image.
-  if (items.length === 1) return items[0] || null;
-  return null;
+  const filtered = items.filter(Boolean);
+  if (filtered.length === 0) return null;
+  return filtered[index % filtered.length] ?? null;
 }
 
 // dom-to-pptx claims gradient support but reads `background-image` with the
@@ -1492,9 +1492,10 @@ export async function runDomToPptx(
 
   // Reduce every element's background-image to the single layer dom-to-pptx can
   // faithfully convert BEFORE the engine reads it (see reduceBackgroundImageLayers
-  // for the why). Runs after ensureExplicitSlideBackgrounds so the injected
-  // [data-od-pptx-bg] layer — which copies the slide's original multi-layer
-  // stack — is normalized too.
+  // for the why). Runs after ensureExplicitSlideBackgrounds and
+  // materializeUnevenPseudoBorders so both the injected [data-od-pptx-bg] layer
+  // and materialized pseudo boxes — which copy the original multi-layer stack —
+  // are normalized too.
   function normalizeBackgroundPaint(slides: HTMLElement[]): void {
     for (const slide of slides) {
       const all: Element[] = [slide, ...Array.from(slide.querySelectorAll("*"))];
@@ -1576,6 +1577,9 @@ export async function runDomToPptx(
           // positioned decorations stay suppressed (a missing flourish beats a
           // wrong full box).
           if (ps.position !== "absolute" && ps.position !== "fixed") continue;
+          // Hidden decorations are still neutralized above; emitting a visible
+          // stand-in would leak paint the source never showed.
+          if (ps.visibility === "hidden") continue;
           const box = document.createElement("div");
           box.setAttribute("data-od-pptx-pseudo-box", "true");
           box.setAttribute("aria-hidden", "true");
@@ -1583,7 +1587,9 @@ export async function runDomToPptx(
             ["display", "block"],
             ["position", ps.position],
             ["left", ps.left],
+            ["right", ps.right],
             ["top", ps.top],
+            ["bottom", ps.bottom],
             ["width", ps.width],
             ["height", ps.height],
             ["margin", ps.margin],
@@ -1603,6 +1609,7 @@ export async function runDomToPptx(
             ["transform", ps.transform],
             ["transform-origin", ps.transformOrigin],
             ["opacity", ps.opacity],
+            ["visibility", ps.visibility],
             ["z-index", ps.zIndex],
             ["pointer-events", "none"],
           ];
@@ -1639,8 +1646,8 @@ export async function runDomToPptx(
     const importedFonts = await exposeImportedFontFaces();
     await document.fonts?.ready;
     ensureExplicitSlideBackgrounds(slides as HTMLElement[]);
-    normalizeBackgroundPaint(slides as HTMLElement[]);
     materializeUnevenPseudoBorders(slides as HTMLElement[]);
+    normalizeBackgroundPaint(slides as HTMLElement[]);
     stabilizeLargeSingleLineText(slides as HTMLElement[]);
     stabilizeAuthoredHeadingLines(slides as HTMLElement[]);
     promoteCjkTypefaces(slides as HTMLElement[]);
