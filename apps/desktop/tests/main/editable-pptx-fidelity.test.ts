@@ -133,6 +133,25 @@ describe('reduceBackgroundImageLayers', () => {
       selectedLayerIndex: null,
     });
   });
+
+  test('named color stops are kept as fallback', () => {
+    expect(reduceBackgroundImageLayers('repeating-linear-gradient(45deg, red, blue)')).toEqual({
+      changed: true,
+      value: 'none',
+      fallbackColor: 'red',
+      selectedLayerIndex: null,
+    });
+  });
+
+  test('quoted url hashes are not treated as hex fallback colors', () => {
+    const input = "image-set(url('https://host/#123.png') 1x, url('https://host/#456.png') 2x)";
+    expect(reduceBackgroundImageLayers(input)).toEqual({
+      changed: true,
+      value: 'none',
+      fallbackColor: null,
+      selectedLayerIndex: null,
+    });
+  });
 });
 
 // Matching background-* lists are comma-separated like background-image. Picking
@@ -285,6 +304,12 @@ describe('runDomToPptx fidelity wiring', () => {
     expect(source).toContain('pseudo === "::before"');
   });
 
+  test('keeps stand-ins outside text hosts so the engine still classifies them as text', () => {
+    expect(source).toContain('isPptxTextHost(element)');
+    expect(source).toContain('parent.insertBefore(box, element)');
+    expect(source).toContain('parent.insertBefore(box, element.nextSibling)');
+  });
+
   test('copies non-border pseudo paint onto the replacement before neutralizing the original', () => {
     expect(source).toContain('["background-image", ps.backgroundImage]');
     expect(source).toContain('["box-shadow", ps.boxShadow]');
@@ -312,6 +337,12 @@ class FakeStyle {
     return this.values.get(name)?.priority ?? '';
   }
 
+  removeProperty(name: string): string {
+    const previous = this.values.get(name)?.value ?? '';
+    this.values.delete(name);
+    return previous;
+  }
+
   toCamelRecord(): Record<string, string> {
     const out: Record<string, string> = {};
     for (const [name, { value }] of this.values) {
@@ -327,10 +358,22 @@ type FakeNode = {
   childNodes: FakeNode[];
   children: FakeNode[];
   firstChild: FakeNode | null;
+  nextSibling: FakeNode | null;
+  parentElement: FakeNode | null;
   style: FakeStyle;
+  tagName: string;
+  textContent: string;
   appendChild: (child: FakeNode) => FakeNode;
   closest: () => null;
   getAttribute: (name: string) => string | null;
+  getBoundingClientRect: () => {
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
+    width: number;
+    height: number;
+  };
   insertBefore: (child: FakeNode, ref: FakeNode | null) => FakeNode;
   prepend: (child: FakeNode) => FakeNode;
   querySelectorAll: (selector: string) => FakeNode[];
@@ -357,7 +400,11 @@ function fakeNode(): FakeNode {
     childNodes: [],
     children: [],
     firstChild: null,
+    nextSibling: null,
+    parentElement: null,
     style: new FakeStyle(),
+    tagName: 'DIV',
+    textContent: '',
     appendChild(child) {
       return node.insertBefore(child, null);
     },
@@ -365,12 +412,26 @@ function fakeNode(): FakeNode {
     getAttribute(name) {
       return node.attrs[name] ?? null;
     },
+    getBoundingClientRect() {
+      return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
+    },
     insertBefore(child, ref) {
+      if (child.parentElement) {
+        const siblings = child.parentElement.children;
+        const current = siblings.indexOf(child);
+        if (current >= 0) siblings.splice(current, 1);
+        child.parentElement.childNodes = [...child.parentElement.children];
+        child.parentElement.firstChild = child.parentElement.children[0] ?? null;
+      }
+      child.parentElement = node;
       const index = ref ? node.children.indexOf(ref) : -1;
       if (index >= 0) node.children.splice(index, 0, child);
       else node.children.push(child);
       node.childNodes = [...node.children];
       node.firstChild = node.children[0] ?? null;
+      for (let i = 0; i < node.children.length; i++) {
+        node.children[i].nextSibling = node.children[i + 1] ?? null;
+      }
       return child;
     },
     prepend(child) {
@@ -404,13 +465,27 @@ function fakeNode(): FakeNode {
 function installFidelityDom(options: {
   after?: Record<string, string>;
   before?: Record<string, string>;
+  hostLinkText?: string;
+  hostText?: string;
   slideBackground: Record<string, string>;
 }): { content: FakeNode; host: FakeNode; slide: FakeNode } {
   const slide = fakeNode();
   const host = fakeNode();
   const content = fakeNode();
-  host.appendChild(content);
+  let link: FakeNode | null = null;
   slide.appendChild(host);
+  if (options.hostText != null) {
+    host.tagName = 'P';
+    host.textContent = options.hostText;
+    if (options.hostLinkText) {
+      link = fakeNode();
+      link.tagName = 'A';
+      link.textContent = options.hostLinkText;
+      host.appendChild(link);
+    }
+  } else {
+    host.appendChild(content);
+  }
 
   const computed = new Map<FakeNode, Record<string, string>>();
   computed.set(slide, {
@@ -447,6 +522,21 @@ function installFidelityDom(options: {
     zIndex: 'auto',
   });
   computed.set(content, { ...computed.get(host)! });
+  if (link) {
+    computed.set(link, {
+      backgroundClip: 'border-box',
+      backgroundColor: 'transparent',
+      backgroundImage: 'none',
+      display: 'inline',
+      fontFamily: 'Inter, sans-serif',
+      fontSize: '16px',
+      lineHeight: '24px',
+      overflow: 'visible',
+      position: 'static',
+      textAlign: 'left',
+      zIndex: 'auto',
+    });
+  }
 
   const body = fakeNode();
   const documentElement = fakeNode();
@@ -755,5 +845,42 @@ describe('runDomToPptx fidelity integration', () => {
     expect(result.error).toBeUndefined();
     expect(box?.style.getPropertyValue('background-origin')).toBe('border-box');
     expect(box?.style.getPropertyValue('background-clip')).toBe('border-box');
+  });
+
+  test('keeps direct text, a link, and spacing on the host when both pseudos materialize', async () => {
+    const { host, slide } = installFidelityDom({
+      slideBackground: { backgroundColor: 'rgb(11, 20, 36)' },
+      hostText: 'See the  docs',
+      hostLinkText: 'docs',
+      before: {
+        content: '""',
+        borderTopWidth: '2px',
+        borderLeftWidth: '2px',
+      },
+      after: {
+        content: '""',
+        borderRightWidth: '3px',
+        borderBottomWidth: '3px',
+        left: 'auto',
+        top: 'auto',
+      },
+    });
+    const originalChildren = [...host.children];
+
+    const result = await runDomToPptx('.slide');
+    const boxes = slide.children.filter((child) => child.getAttribute('data-od-pptx-pseudo-box') === 'true');
+    const link = host.children.find((child) => child.tagName === 'A');
+
+    expect(result.error).toBeUndefined();
+    expect(host.textContent).toBe('See the  docs');
+    expect(link?.textContent).toBe('docs');
+    expect(host.children).toEqual(originalChildren);
+    expect(host.children.some((child) => child.getAttribute('data-od-pptx-pseudo-box') === 'true')).toBe(
+      false,
+    );
+    expect(boxes).toHaveLength(2);
+    expect(boxes.every((box) => box.parentElement === slide)).toBe(true);
+    expect(slide.children.indexOf(boxes[0])).toBeLessThan(slide.children.indexOf(host));
+    expect(slide.children.indexOf(boxes[1])).toBeGreaterThan(slide.children.indexOf(host));
   });
 });

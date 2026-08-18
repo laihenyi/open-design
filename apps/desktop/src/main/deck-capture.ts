@@ -1098,17 +1098,78 @@ export function cssCommaListItem(list: string, index: number): string | null {
 }
 
 // First color stop in a CSS image/gradient value, including Color 4 functions
-// (`oklch()`, `color(display-p3 …)`). Direction/angle tokens are skipped so
-// `radial-gradient(circle, oklch(...), …)` still yields a usable fallback fill
-// when the engine cannot keep the gradient. Kept self-contained so it can be
-// unit-tested and serialized into the export render window.
+// (`oklch()`, `color(display-p3 …)`) and named/currentColor stops. Quoted
+// strings and `url(...)` bodies are skipped so a hash in a filename cannot
+// become a bogus fill. Kept self-contained so it can be unit-tested and
+// serialized into the export render window.
 export function firstCssColorStop(input: string): string | null {
   const colorFn = /^(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)$/i;
   const ident = /^-?[a-z_][\w-]*/i;
   const hex = /^#[0-9a-f]{3,8}\b/i;
+  const named = new Set(
+    (
+      "aliceblue antiquewhite aqua aquamarine azure beige bisque black " +
+      "blanchedalmond blue blueviolet brown burlywood cadetblue chartreuse " +
+      "chocolate coral cornflowerblue cornsilk crimson cyan darkblue darkcyan " +
+      "darkgoldenrod darkgray darkgreen darkgrey darkkhaki darkmagenta " +
+      "darkolivegreen darkorange darkorchid darkred darksalmon darkseagreen " +
+      "darkslateblue darkslategray darkslategrey darkturquoise darkviolet " +
+      "deeppink deepskyblue dimgray dimgrey dodgerblue firebrick floralwhite " +
+      "forestgreen fuchsia gainsboro ghostwhite gold goldenrod gray green " +
+      "greenyellow grey honeydew hotpink indianred indigo ivory khaki lavender " +
+      "lavenderblush lawngreen lemonchiffon lightblue lightcoral lightcyan " +
+      "lightgoldenrodyellow lightgray lightgreen lightgrey lightpink " +
+      "lightsalmon lightseagreen lightskyblue lightslategray lightslategrey " +
+      "lightsteelblue lightyellow lime limegreen linen magenta maroon " +
+      "mediumaquamarine mediumblue mediumorchid mediumpurple mediumseagreen " +
+      "mediumslateblue mediumspringgreen mediumturquoise mediumvioletred " +
+      "midnightblue mintcream mistyrose moccasin navajowhite navy oldlace olive " +
+      "olivedrab orange orangered orchid palegoldenrod palegreen paleturquoise " +
+      "palevioletred papayawhip peachpuff peru pink plum powderblue purple " +
+      "rebeccapurple red rosybrown royalblue saddlebrown salmon sandybrown " +
+      "seagreen seashell sienna silver skyblue slateblue slategray slategrey " +
+      "snow springgreen steelblue tan teal thistle tomato turquoise violet " +
+      "wheat white whitesmoke yellow yellowgreen currentcolor"
+    ).split(" "),
+  );
+
+  const skipQuoted = (from: number, quote: string): number => {
+    let i = from + 1;
+    while (i < input.length) {
+      if (input[i] === "\\") {
+        i += 2;
+        continue;
+      }
+      if (input[i] === quote) return i + 1;
+      i += 1;
+    }
+    return input.length;
+  };
+
+  const skipBalanced = (openAt: number): number => {
+    let depth = 0;
+    for (let k = openAt; k < input.length; k++) {
+      const ch = input[k];
+      if (ch === '"' || ch === "'") {
+        k = skipQuoted(k, ch) - 1;
+        continue;
+      }
+      if (ch === "(") depth += 1;
+      else if (ch === ")") {
+        depth -= 1;
+        if (depth === 0) return k + 1;
+      }
+    }
+    return input.length;
+  };
 
   let i = 0;
   while (i < input.length) {
+    const ch = input[i];
+    if (ch === '"' || ch === "'") {
+      i = skipQuoted(i, ch);
+      continue;
+    }
     const rest = input.slice(i);
     const hexMatch = rest.match(hex);
     if (hexMatch) return hexMatch[0];
@@ -1118,20 +1179,19 @@ export function firstCssColorStop(input: string): string | null {
       const afterName = i + name.length;
       if (input[afterName] === "(") {
         if (colorFn.test(name)) {
-          let depth = 0;
-          for (let k = afterName; k < input.length; k++) {
-            if (input[k] === "(") depth += 1;
-            else if (input[k] === ")") {
-              depth -= 1;
-              if (depth === 0) return input.slice(i, k + 1);
-            }
-          }
+          const end = skipBalanced(afterName);
+          if (end > afterName && input[end - 1] === ")") return input.slice(i, end);
           return null;
         }
-        // Gradient/url/image-set wrappers: scan their arguments, don't skip them.
+        if (/^url$/i.test(name)) {
+          i = skipBalanced(afterName);
+          continue;
+        }
         i = afterName;
         continue;
       }
+      const key = name.toLowerCase();
+      if (key !== "transparent" && named.has(key)) return name;
       i = afterName;
       continue;
     }
@@ -1581,6 +1641,70 @@ export async function runDomToPptx(
   // border as its own line. The original pseudo is neutralized via an injected
   // rule (the engine reads a suppressed pseudo's computed border/background as
   // if it still existed, so the paint must be zeroed, not just `content: none`).
+  //
+  // A block stand-in MUST NOT become a child of a text host: the engine's
+  // isTextContainer returns false as soon as any child is display:block, then
+  // text falls through a trim-only path that drops links and spacing. Overlay
+  // those replacements on the nearest non-text ancestor instead.
+  function isPptxSafeInlineChild(el: Element): boolean {
+    const tag = (el.tagName || "").toUpperCase();
+    if (!tag || tag.includes("-") || tag === "IMG" || tag === "SVG") return false;
+    const style = getComputedStyle(el);
+    const display = (style.display || "").toLowerCase();
+    if (display === "block" || display === "flex" || display === "grid" || display === "table") {
+      return false;
+    }
+    const parent = el.parentElement;
+    if (parent) {
+      const parentDisplay = (getComputedStyle(parent).display || "").toLowerCase();
+      if (parentDisplay.includes("flex") || parentDisplay.includes("grid")) return false;
+    }
+    const isInlineTag = ["SPAN", "B", "STRONG", "EM", "I", "A", "SMALL", "MARK"].includes(tag);
+    if (display.includes("inline")) return true;
+    if (!display) return isInlineTag;
+    return isInlineTag;
+  }
+
+  function isPptxTextHost(element: HTMLElement): boolean {
+    if (element.getAttribute("data-od-pptx-pseudo-box") === "true") return false;
+    if (!(element.textContent || "").trim()) return false;
+    const children = Array.from(element.children).filter(
+      (child) => child.getAttribute("data-od-pptx-pseudo-box") !== "true",
+    );
+    if (children.length === 0) return true;
+    return children.every(isPptxSafeInlineChild);
+  }
+
+  function rebasePseudoBoxToOverlayParent(
+    box: HTMLElement,
+    host: HTMLElement,
+    parent: HTMLElement,
+  ): void {
+    if (typeof host.getBoundingClientRect !== "function") return;
+    const hostRect = host.getBoundingClientRect();
+    const parentRect = parent.getBoundingClientRect();
+    const left = box.style.getPropertyValue("left");
+    const right = box.style.getPropertyValue("right");
+    const top = box.style.getPropertyValue("top");
+    const bottom = box.style.getPropertyValue("bottom");
+    const width = Number.parseFloat(box.style.getPropertyValue("width")) || 0;
+    const height = Number.parseFloat(box.style.getPropertyValue("height")) || 0;
+    let viewportLeft: number | null = null;
+    let viewportTop: number | null = null;
+    if (left) viewportLeft = hostRect.left + Number.parseFloat(left);
+    else if (right) viewportLeft = hostRect.right - Number.parseFloat(right) - width;
+    if (top) viewportTop = hostRect.top + Number.parseFloat(top);
+    else if (bottom) viewportTop = hostRect.bottom - Number.parseFloat(bottom) - height;
+    if (viewportLeft != null && Number.isFinite(viewportLeft)) {
+      box.style.setProperty("left", `${viewportLeft - parentRect.left}px`, "important");
+      box.style.removeProperty("right");
+    }
+    if (viewportTop != null && Number.isFinite(viewportTop)) {
+      box.style.setProperty("top", `${viewportTop - parentRect.top}px`, "important");
+      box.style.removeProperty("bottom");
+    }
+  }
+
   function materializeUnevenPseudoBorders(slides: HTMLElement[]): void {
     const rules: string[] = [];
     let seq = 0;
@@ -1656,6 +1780,18 @@ export async function runDomToPptx(
           ];
           for (const [prop, value] of copy) {
             if (value && value !== "auto") box.style.setProperty(prop, value, "important");
+          }
+          if (isPptxTextHost(element)) {
+            let parent: HTMLElement | null = element.parentElement;
+            while (parent && isPptxTextHost(parent)) {
+              parent = parent.parentElement;
+            }
+            if (parent) {
+              rebasePseudoBoxToOverlayParent(box, element, parent);
+              if (pseudo === "::before") parent.insertBefore(box, element);
+              else parent.insertBefore(box, element.nextSibling);
+              continue;
+            }
           }
           if (pseudo === "::before") {
             element.insertBefore(box, element.firstChild);
