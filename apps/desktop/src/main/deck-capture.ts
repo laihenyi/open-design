@@ -1675,6 +1675,27 @@ export async function runDomToPptx(
     return children.every(isPptxSafeInlineChild);
   }
 
+  // A stand-in overlaid on an ancestor leaves the host's visual context behind:
+  // transforms, filters, clip-path, and overflow clipping on the host (or on
+  // text-host ancestors between it and the overlay parent) cannot be replicated
+  // on a sibling without matrix/clip math the export cannot verify, so those
+  // decorations stay suppressed. Opacity is the one context that composes
+  // exactly (multiplication), so it is returned for the caller to fold into the
+  // stand-in instead of blocking it.
+  function composableOverlayOpacity(host: HTMLElement, parent: HTMLElement): number | null {
+    let opacity = 1;
+    for (let el: HTMLElement | null = host; el && el !== parent; el = el.parentElement) {
+      const style = getComputedStyle(el);
+      if (style.transform && style.transform !== "none") return null;
+      if (style.filter && style.filter !== "none") return null;
+      if (style.clipPath && style.clipPath !== "none") return null;
+      if (style.overflow && style.overflow !== "visible") return null;
+      const value = Number.parseFloat(style.opacity);
+      if (Number.isFinite(value)) opacity *= Math.max(0, Math.min(1, value));
+    }
+    return opacity;
+  }
+
   function rebasePseudoBoxToOverlayParent(
     box: HTMLElement,
     host: HTMLElement,
@@ -1712,7 +1733,13 @@ export async function runDomToPptx(
       const all: Element[] = [slide, ...Array.from(slide.querySelectorAll("*"))];
       for (const el of all) {
         const element = el as HTMLElement;
-        if (!element.style || element.getAttribute("data-od-pptx-pseudo-box") === "true") continue;
+        if (!element.style) continue;
+        // Export-generated nodes (pseudo stand-ins, the injected slide
+        // background layer) do not exist in the authored deck; a generic
+        // authored rule like `div::before { border-top: … }` matching them must
+        // not spawn extra shapes.
+        if (element.getAttribute("data-od-pptx-pseudo-box") === "true") continue;
+        if (element.getAttribute("data-od-pptx-bg") === "true") continue;
         for (const pseudo of ["::before", "::after"] as const) {
           const ps = getComputedStyle(element, pseudo);
           if (
@@ -1743,6 +1770,29 @@ export async function runDomToPptx(
           // Hidden decorations are still neutralized above; emitting a visible
           // stand-in would leak paint the source never showed.
           if (ps.visibility === "hidden") continue;
+          // Text hosts get their stand-in overlaid on an ancestor (see
+          // isPptxTextHost). That path only works when the placement can be
+          // reproduced faithfully:
+          // - fixed offsets are viewport-relative, so the parent-relative
+          //   rebase below would shift them twice; fixed decorations on text
+          //   hosts stay suppressed.
+          // - transform/filter/clip/overflow on the host cannot be carried
+          //   onto a sibling (see composableOverlayOpacity); only opacity
+          //   composes exactly and is folded into the stand-in.
+          let overlayParent: HTMLElement | null = null;
+          let overlayOpacity = 1;
+          if (isPptxTextHost(element)) {
+            if (ps.position === "fixed") continue;
+            let parent: HTMLElement | null = element.parentElement;
+            while (parent && isPptxTextHost(parent)) {
+              parent = parent.parentElement;
+            }
+            if (!parent) continue;
+            const composed = composableOverlayOpacity(element, parent);
+            if (composed == null) continue;
+            overlayParent = parent;
+            overlayOpacity = composed;
+          }
           const box = document.createElement("div");
           box.setAttribute("data-od-pptx-pseudo-box", "true");
           box.setAttribute("aria-hidden", "true");
@@ -1781,17 +1831,17 @@ export async function runDomToPptx(
           for (const [prop, value] of copy) {
             if (value && value !== "auto") box.style.setProperty(prop, value, "important");
           }
-          if (isPptxTextHost(element)) {
-            let parent: HTMLElement | null = element.parentElement;
-            while (parent && isPptxTextHost(parent)) {
-              parent = parent.parentElement;
+          if (overlayParent) {
+            const parent = overlayParent;
+            if (overlayOpacity < 1) {
+              const own = Number.parseFloat(ps.opacity);
+              const effective = (Number.isFinite(own) ? own : 1) * overlayOpacity;
+              box.style.setProperty("opacity", String(effective), "important");
             }
-            if (parent) {
-              rebasePseudoBoxToOverlayParent(box, element, parent);
-              if (pseudo === "::before") parent.insertBefore(box, element);
-              else parent.insertBefore(box, element.nextSibling);
-              continue;
-            }
+            rebasePseudoBoxToOverlayParent(box, element, parent);
+            if (pseudo === "::before") parent.insertBefore(box, element);
+            else parent.insertBefore(box, element.nextSibling);
+            continue;
           }
           if (pseudo === "::before") {
             element.insertBefore(box, element.firstChild);

@@ -310,6 +310,16 @@ describe('runDomToPptx fidelity wiring', () => {
     expect(source).toContain('parent.insertBefore(box, element.nextSibling)');
   });
 
+  test('never probes pseudos on export-generated nodes', () => {
+    expect(source).toContain('element.getAttribute("data-od-pptx-bg") === "true"');
+    expect(source).toContain('element.getAttribute("data-od-pptx-pseudo-box") === "true"');
+  });
+
+  test('suppresses overlay stand-ins whose placement or visual context cannot be reproduced', () => {
+    expect(source).toContain('if (ps.position === "fixed") continue');
+    expect(source).toContain('composableOverlayOpacity(element, parent)');
+  });
+
   test('copies non-border pseudo paint onto the replacement before neutralizing the original', () => {
     expect(source).toContain('["background-image", ps.backgroundImage]');
     expect(source).toContain('["box-shadow", ps.boxShadow]');
@@ -465,7 +475,9 @@ function fakeNode(): FakeNode {
 function installFidelityDom(options: {
   after?: Record<string, string>;
   before?: Record<string, string>;
+  beforeTarget?: 'host' | 'backgroundLayer';
   hostLinkText?: string;
+  hostStyle?: Record<string, string>;
   hostText?: string;
   slideBackground: Record<string, string>;
 }): { content: FakeNode; host: FakeNode; slide: FakeNode } {
@@ -520,6 +532,7 @@ function installFidelityDom(options: {
     position: 'relative',
     textAlign: 'left',
     zIndex: 'auto',
+    ...options.hostStyle,
   });
   computed.set(content, { ...computed.get(host)! });
   if (link) {
@@ -537,6 +550,11 @@ function installFidelityDom(options: {
       zIndex: 'auto',
     });
   }
+
+  const beforeTargets = (el: FakeNode): boolean =>
+    options.beforeTarget === 'backgroundLayer'
+      ? el.getAttribute('data-od-pptx-bg') === 'true'
+      : el === host;
 
   const body = fakeNode();
   const documentElement = fakeNode();
@@ -603,7 +621,7 @@ function installFidelityDom(options: {
           visibility: 'visible',
           width: '24px',
           zIndex: 'auto',
-          ...(el === host ? options.before : undefined),
+          ...(beforeTargets(el) ? options.before : undefined),
         };
       }
       if (pseudo === '::after') {
@@ -882,5 +900,114 @@ describe('runDomToPptx fidelity integration', () => {
     expect(boxes.every((box) => box.parentElement === slide)).toBe(true);
     expect(slide.children.indexOf(boxes[0])).toBeLessThan(slide.children.indexOf(host));
     expect(slide.children.indexOf(boxes[1])).toBeGreaterThan(slide.children.indexOf(host));
+  });
+
+  test('a generic pseudo rule matching the injected background layer creates no extra shapes', async () => {
+    const { slide } = installFidelityDom({
+      slideBackground: { backgroundColor: 'rgb(11, 20, 36)' },
+      beforeTarget: 'backgroundLayer',
+      before: {
+        content: '""',
+        borderTopWidth: '2px',
+        borderLeftWidth: '2px',
+      },
+    });
+
+    const result = await runDomToPptx('.slide');
+    const everyNode = [slide, ...slide.querySelectorAll('*')];
+    const boxes = everyNode.filter((node) => node.getAttribute('data-od-pptx-pseudo-box') === 'true');
+    const bgLayer = everyNode.find((node) => node.getAttribute('data-od-pptx-bg') === 'true');
+
+    expect(result.error).toBeUndefined();
+    expect(bgLayer).toBeDefined();
+    expect(bgLayer?.getAttribute('data-od-pptx-pseudo-before')).toBeNull();
+    expect(boxes).toHaveLength(0);
+  });
+
+  test('suppresses a fixed pseudo on a text host instead of rebasing viewport offsets', async () => {
+    const { host, slide } = installFidelityDom({
+      slideBackground: { backgroundColor: 'rgb(11, 20, 36)' },
+      hostText: 'Anchor',
+      before: {
+        content: '""',
+        borderTopWidth: '2px',
+        borderLeftWidth: '2px',
+        position: 'fixed',
+      },
+    });
+
+    const result = await runDomToPptx('.slide');
+    const everyNode = [slide, ...slide.querySelectorAll('*')];
+    const boxes = everyNode.filter((node) => node.getAttribute('data-od-pptx-pseudo-box') === 'true');
+
+    expect(result.error).toBeUndefined();
+    expect(boxes).toHaveLength(0);
+    // The original pseudo is still neutralized so the engine cannot draw it as a full box.
+    expect(host.getAttribute('data-od-pptx-pseudo-before')).not.toBeNull();
+  });
+
+  test('suppresses an overlay stand-in when the text host is transformed', async () => {
+    const { slide } = installFidelityDom({
+      slideBackground: { backgroundColor: 'rgb(11, 20, 36)' },
+      hostText: 'Rotated label',
+      hostStyle: { transform: 'rotate(6deg)' },
+      before: {
+        content: '""',
+        borderTopWidth: '2px',
+        borderLeftWidth: '2px',
+      },
+    });
+
+    const result = await runDomToPptx('.slide');
+    const everyNode = [slide, ...slide.querySelectorAll('*')];
+    const boxes = everyNode.filter((node) => node.getAttribute('data-od-pptx-pseudo-box') === 'true');
+
+    expect(result.error).toBeUndefined();
+    expect(boxes).toHaveLength(0);
+  });
+
+  test('suppresses an overlay stand-in when the text host clips overflow', async () => {
+    const { slide } = installFidelityDom({
+      slideBackground: { backgroundColor: 'rgb(11, 20, 36)' },
+      hostText: 'Clipped label',
+      hostStyle: { overflow: 'hidden' },
+      before: {
+        content: '""',
+        borderTopWidth: '2px',
+        borderLeftWidth: '2px',
+      },
+    });
+
+    const result = await runDomToPptx('.slide');
+    const everyNode = [slide, ...slide.querySelectorAll('*')];
+    const boxes = everyNode.filter((node) => node.getAttribute('data-od-pptx-pseudo-box') === 'true');
+
+    expect(result.error).toBeUndefined();
+    expect(boxes).toHaveLength(0);
+  });
+
+  test('folds a translucent text host opacity into the overlay stand-in', async () => {
+    const { host, slide } = installFidelityDom({
+      slideBackground: { backgroundColor: 'rgb(11, 20, 36)' },
+      hostText: 'Faded label',
+      hostStyle: { opacity: '0.5' },
+      before: {
+        content: '""',
+        borderTopWidth: '2px',
+        borderLeftWidth: '2px',
+        opacity: '0.8',
+      },
+    });
+
+    const result = await runDomToPptx('.slide');
+    const box = slide.children.find((child) => child.getAttribute('data-od-pptx-pseudo-box') === 'true');
+
+    expect(result.error).toBeUndefined();
+    expect(box).toBeDefined();
+    expect(box?.parentElement).toBe(slide);
+    expect(host.children.some((child) => child.getAttribute('data-od-pptx-pseudo-box') === 'true')).toBe(
+      false,
+    );
+    expect(box?.style.getPropertyValue('opacity')).toBe('0.4');
   });
 });
